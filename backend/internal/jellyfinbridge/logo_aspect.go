@@ -61,7 +61,7 @@ var (
 	fetchLogo = func(source string) {
 		ctx, cancel := context.WithTimeout(context.Background(), logoAspectTimeout)
 		defer cancel()
-		img := fetchImage(ctx, source)
+		img := fetchImageShared(ctx, source)
 		rememberLogoSize(source, img.width, img.height, img.data == nil)
 	}
 )

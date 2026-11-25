@@ -1,8 +1,14 @@
 package jellyfinbridge
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
+	"image"
+	"image/jpeg"
+	"image/png"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -13,6 +19,9 @@ import (
 
 	"novastream/internal/requestsecurity"
 	"novastream/models"
+
+	xdraw "golang.org/x/image/draw"
+	"golang.org/x/sync/singleflight"
 )
 
 // handleImage serves /Items/{id}/Images/{type}[/{index}]. Jellyfin clients
@@ -177,12 +186,38 @@ type externalImage struct {
 }
 
 const (
-	externalImageMaxBytes    = 2 << 20
+	externalImageMaxBytes    = 2 << 20 // larger images are scaled down (shrinkExternalImage)
 	externalImageCacheTTL    = 6 * time.Hour
 	externalImageFailTTL     = 10 * time.Minute // dead logo hosts are common in IPTV lists
 	externalImageCacheMax    = 512
 	externalImageCacheBudget = 64 << 20
 )
+
+const (
+	// externalImageFetchMaxBytes bounds the download: guide images can be
+	// camera originals (tvspielfilm serves 4242x2828 JPEGs of several MB).
+	externalImageFetchMaxBytes = 16 << 20
+	externalImageShrinkSide    = 1920     // the longer side of a scaled-down picture
+	externalImageMaxPixels     = 24 << 20 // decoding a bigger picture is refused
+)
+
+var (
+	// externalImageFetches joins concurrent fetches of one image: a page of
+	// recordings of one show asks for its (large) guide image many times.
+	externalImageFetches singleflight.Group
+	// externalImageShrinks lets one picture be decoded at a time: a
+	// progressive JPEG keeps its coefficients too, up to about 0.4 GB.
+	externalImageShrinks = make(chan struct{}, 1)
+)
+
+// fetchImageShared is fetchImage with concurrent fetches of one source joined.
+func fetchImageShared(ctx context.Context, source string) externalImage {
+	v, _, _ := externalImageFetches.Do(source, func() (any, error) {
+		// A client that goes away does not fail the others waiting.
+		return fetchImage(context.WithoutCancel(ctx), source), nil
+	})
+	return v.(externalImage)
+}
 
 func cacheExternalImage(source string, img externalImage) {
 	externalImages.Lock()
@@ -216,7 +251,7 @@ func (s *Server) fetchExternalImage(w http.ResponseWriter, r *http.Request, sour
 	fresh := ok && ((cached.data != nil && time.Since(cached.at) < externalImageCacheTTL) ||
 		(cached.data == nil && time.Since(cached.at) < externalImageFailTTL))
 	if !fresh {
-		cached = fetchImage(r.Context(), source)
+		cached = fetchImageShared(r.Context(), source)
 		cacheExternalImage(source, cached)
 	}
 	if cached.data == nil {
@@ -285,13 +320,161 @@ func fetchImage(ctx context.Context, source string) externalImage {
 		return failed
 	}
 	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, externalImageMaxBytes+1))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, externalImageFetchMaxBytes+1))
 	contentType := resp.Header.Get("Content-Type")
-	if err != nil || resp.StatusCode != http.StatusOK || len(data) > externalImageMaxBytes || !strings.HasPrefix(contentType, "image/") {
+	if err != nil || resp.StatusCode != http.StatusOK || len(data) > externalImageFetchMaxBytes || !strings.HasPrefix(contentType, "image/") {
 		return failed
+	}
+	if len(data) > externalImageMaxBytes {
+		if data, contentType = shrinkExternalImage(data); data == nil {
+			return failed
+		}
 	}
 	img := externalImage{at: time.Now(), contentType: contentType, data: data}
 	img.width, img.height = imageSize(data)
 	rememberLogoSize(source, img.width, img.height, false)
 	return img
+}
+
+// shrinkExternalImage scales a picture too large to cache and send as it is
+// down to externalImageShrinkSide (its EXIF orientation applied) and encodes
+// it as JPEG, or as PNG when it has transparency; nil when it cannot (unknown
+// format, too many pixels, still too large). Only JPEG, PNG and GIF are
+// decoded: a WebP's header may name another size than the frame it holds.
+func shrinkExternalImage(data []byte) (out []byte, contentType string) {
+	defer func() {
+		if recover() != nil { // a malformed picture: refused, the server goes on
+			out, contentType = nil, ""
+		}
+	}()
+	cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil || cfg.Width <= 0 || cfg.Height <= 0 || cfg.Width*cfg.Height > externalImageMaxPixels {
+		return nil, ""
+	}
+	if format != "jpeg" && format != "png" && format != "gif" {
+		return nil, ""
+	}
+	externalImageShrinks <- struct{}{}
+	defer func() { <-externalImageShrinks }()
+	src, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil || src.Bounds().Dx() != cfg.Width || src.Bounds().Dy() != cfg.Height {
+		return nil, ""
+	}
+	bounds := src.Bounds()
+	scale := min(1, float64(externalImageShrinkSide)/float64(bounds.Dx()), float64(externalImageShrinkSide)/float64(bounds.Dy()))
+	width, height := max(1, int(math.Round(float64(bounds.Dx())*scale))), max(1, int(math.Round(float64(bounds.Dy())*scale)))
+	scaled := image.NewRGBA(image.Rect(0, 0, width, height))
+	xdraw.ApproxBiLinear.Scale(scaled, scaled.Bounds(), src, bounds, xdraw.Src, nil)
+	dst := orientImage(scaled, jpegOrientation(data))
+	var buf bytes.Buffer
+	contentType = "image/jpeg"
+	if o, ok := src.(interface{ Opaque() bool }); ok && !o.Opaque() {
+		// JPEG has no alpha: transparent parts (a logo's background) would
+		// turn black.
+		contentType = "image/png"
+		err = png.Encode(&buf, dst)
+	} else {
+		err = jpeg.Encode(&buf, dst, &jpeg.Options{Quality: 85})
+	}
+	if err != nil || buf.Len() > externalImageMaxBytes {
+		return nil, ""
+	}
+	return buf.Bytes(), contentType
+}
+
+// jpegOrientation is a JPEG's EXIF orientation (1-8; 1 when it has none):
+// browsers and image loaders honour it, Go's decoder does not.
+func jpegOrientation(data []byte) int {
+	if len(data) < 4 || data[0] != 0xFF || data[1] != 0xD8 {
+		return 1
+	}
+	for i := 2; i+4 <= len(data); {
+		if data[i] != 0xFF {
+			return 1
+		}
+		marker := data[i+1]
+		if marker == 0xDA || marker == 0xD9 { // image data: no EXIF before it
+			return 1
+		}
+		size := int(data[i+2])<<8 | int(data[i+3])
+		if size < 2 || i+2+size > len(data) {
+			return 1
+		}
+		if seg := data[i+4 : i+2+size]; marker == 0xE1 && len(seg) > 6 && string(seg[:6]) == "Exif\x00\x00" {
+			return exifOrientation(seg[6:])
+		}
+		i += 2 + size
+	}
+	return 1
+}
+
+// exifOrientation reads the orientation tag (0x0112) of IFD0 in an EXIF
+// TIFF block.
+func exifOrientation(tiff []byte) int {
+	if len(tiff) < 8 {
+		return 1
+	}
+	var order binary.ByteOrder
+	switch string(tiff[:2]) {
+	case "II":
+		order = binary.LittleEndian
+	case "MM":
+		order = binary.BigEndian
+	default:
+		return 1
+	}
+	ifd := int(order.Uint32(tiff[4:8]))
+	if ifd < 8 || ifd+2 > len(tiff) {
+		return 1
+	}
+	for k, n := 0, int(order.Uint16(tiff[ifd:])); k < n; k++ {
+		entry := ifd + 2 + 12*k
+		if entry+12 > len(tiff) {
+			return 1
+		}
+		if order.Uint16(tiff[entry:]) == 0x0112 {
+			if v := int(order.Uint16(tiff[entry+8:])); v >= 1 && v <= 8 {
+				return v
+			}
+			return 1
+		}
+	}
+	return 1
+}
+
+// orientImage turns a picture as its EXIF orientation says (2-8 mirror
+// and/or rotate it).
+func orientImage(src *image.RGBA, orientation int) *image.RGBA {
+	if orientation <= 1 || orientation > 8 {
+		return src
+	}
+	w, h := src.Bounds().Dx(), src.Bounds().Dy()
+	dw, dh := w, h
+	if orientation >= 5 {
+		dw, dh = h, w
+	}
+	dst := image.NewRGBA(image.Rect(0, 0, dw, dh))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			var dx, dy int
+			switch orientation {
+			case 2:
+				dx, dy = w-1-x, y
+			case 3:
+				dx, dy = w-1-x, h-1-y
+			case 4:
+				dx, dy = x, h-1-y
+			case 5:
+				dx, dy = y, x
+			case 6:
+				dx, dy = h-1-y, x
+			case 7:
+				dx, dy = h-1-y, w-1-x
+			case 8:
+				dx, dy = y, w-1-x
+			}
+			copy(dst.Pix[dst.PixOffset(dx, dy):dst.PixOffset(dx, dy)+4], src.Pix[src.PixOffset(x, y):src.PixOffset(x, y)+4])
+		}
+	}
+	return dst
 }
