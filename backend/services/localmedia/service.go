@@ -1720,6 +1720,12 @@ func (s *Service) buildItem(ctx context.Context, library models.LocalMediaLibrar
 	now := time.Now().UTC()
 	if hasExisting && canReuseLocalMediaItem(existing, filePath, info.Size(), modifiedAt) {
 		s.rematchReusedItemByExternalIDs(ctx, library, detected, metadataCache, &existing)
+		// Season and episode follow the current detection on unchanged files too, so a
+		// rescan applies an improved detection (such as the season folder).
+		if library.Type == models.LocalMediaLibraryTypeShow && detected.episode > 0 {
+			existing.SeasonNumber = detected.season
+			existing.EpisodeNumber = detected.episode
+		}
 		existing.FilePath = filePath
 		existing.FileName = filepath.Base(filePath)
 		existing.IsMissing = false
@@ -1893,6 +1899,7 @@ func (s *Service) detectTitlesForFiles(filePaths []string, libraryType models.Lo
 		parsed := parsedByName[fileName]
 		detected := detectTitle(libraryType, fileName, parsed)
 		applyFolderExternalIDs(&detected, filePath)
+		applyFolderSeason(&detected, libraryType, filePath)
 		results[filePath] = detected
 	}
 
@@ -2335,6 +2342,29 @@ func applyFolderExternalIDs(detected *detectedTitle, filePath string) {
 			return
 		}
 		dir = filepath.Dir(dir)
+	}
+}
+
+// folderSeasonPattern matches a season folder: "Season 01", "Season 1",
+// "Staffel 1", "Saison 2", "S01" (an optional suffix such as " (2021)" after
+// the number is allowed).
+var folderSeasonPattern = regexp.MustCompile(`(?i)^(?:(?:season|staffel|saison|temporada|stagione)[\s._-]*|s)0*(\d{1,2})(?:$|[^\d])`)
+
+// applyFolderSeason takes an episode's season from its folder ("Show/Season
+// 01/Show - 05.mkv") when the file name names an episode but no season, as
+// with anime releases. A season in the file name always wins; "Specials" and
+// "Season 00" stay season 0.
+func applyFolderSeason(detected *detectedTitle, libraryType models.LocalMediaLibraryType, filePath string) {
+	if libraryType != models.LocalMediaLibraryTypeShow || detected.season != 0 || detected.episode <= 0 {
+		return
+	}
+	name := strings.TrimSpace(filepath.Base(filepath.Dir(filePath)))
+	match := folderSeasonPattern.FindStringSubmatch(name)
+	if match == nil {
+		return
+	}
+	if season, err := strconv.Atoi(match[1]); err == nil {
+		detected.season = normalizeDetectedSeason(season)
 	}
 }
 
