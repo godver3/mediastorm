@@ -647,6 +647,11 @@ func (s *Server) ensureLiveHLS(ctx context.Context, p *principal, sess *playSess
 	}
 	if s.liveTimeshift() {
 		q.Set("timeshift", "1")
+		// Without the backlog of the source's own DVR window: jellyfin-web places its live seek
+		// bar by wall-clock time, counting media time from the moment playback started, so a
+		// playlist reaching back before the tune-in would put every position off by its length
+		// and make the time before the tune-in unreachable.
+		q.Set("timeshiftBacklog", "0")
 	}
 	var resp hlsStartResponse
 	if code, err := callJSON(s.deps.Handlers.LiveHLSStart, internalRequest(ctx, p, http.MethodGet, "/api/live/hls/start?"+q.Encode(), nil, nil), &resp); err != nil {

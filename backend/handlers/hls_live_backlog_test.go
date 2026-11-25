@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -631,5 +632,55 @@ func TestListLiveSegmentsSkipsBacklog(t *testing.T) {
 	}
 	if len(listLiveSegments(dir, 0)) != 4 {
 		t.Error("without a backlog every segment counts")
+	}
+}
+
+// A timeshift session tuned with timeshiftBacklog=0 (the Jellyfin bridge) keeps its window to what
+// it plays from the tune-in on; without it the same source gets its backlog.
+func TestStartLiveTranscodingWithoutTimeshiftBacklog(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake ffmpeg shell script is POSIX-only")
+	}
+	srv := backlogTestSource(t, false)
+	dir := t.TempDir()
+	script := filepath.Join(dir, "ffmpeg")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nexec sleep 30\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, noBacklog := range []bool{true, false} {
+		session := &HLSSession{
+			ID: fmt.Sprintf("nobacklog-%v", noBacklog), Path: srv.URL + "/master.m3u8", LiveProvider: "m3u", IsLive: true,
+			OutputDir: filepath.Join(dir, fmt.Sprintf("out-%v", noBacklog)), PlaybackTarget: "native", LastSegmentRequest: time.Now(),
+			LiveTuning: LiveTuningSettings{TimeshiftWindow: time.Minute, NoTimeshiftBacklog: noBacklog},
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		m := &HLSManager{ffmpegPath: script}
+		done := make(chan struct{})
+		go func() { _ = m.startLiveTranscoding(ctx, session, 0); close(done) }()
+		deadline := time.Now().Add(10 * time.Second)
+		for {
+			session.mu.RLock()
+			started := session.FFmpegPID != 0
+			session.mu.RUnlock()
+			if started {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("noBacklog=%v: FFmpeg never started", noBacklog)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		if got := session.liveBacklogEnd() > 0; got == noBacklog {
+			t.Errorf("noBacklog=%v: backlog=%v", noBacklog, got)
+		}
+		session.stopLiveBacklog()
+		cancel()
+		session.mu.RLock()
+		cmd := session.FFmpegCmd
+		session.mu.RUnlock()
+		if cmd != nil && cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		<-done
 	}
 }

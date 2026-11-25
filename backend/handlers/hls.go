@@ -619,6 +619,11 @@ type LiveTuningSettings struct {
 	// browser-safe H.264 (hls_live_web_copy.go); the player falls back to the encode itself when
 	// its browser cannot decode the copy. Other web callers (the Jellyfin bridge) keep the encode.
 	WebVideoCopy bool
+	// NoTimeshiftBacklog (timeshiftBacklog=0) keeps a timeshift session's window to what it plays
+	// from the tune-in on: no backlog from the source's DVR window (hls_live_backlog.go). For
+	// players whose timeline takes media time 0 as the moment playback started (jellyfin-web
+	// places its live seek bar by wall-clock time from there).
+	NoTimeshiftBacklog bool
 }
 
 // LiveProviderUsageEntry summarizes active usage for a single live provider.
@@ -3018,7 +3023,7 @@ func (m *HLSManager) startLiveTranscoding(ctx context.Context, session *HLSSessi
 		args = append(args, "-f", "mpegts")
 	}
 	startNumber := resumeFrom
-	if resumeFrom == 0 && session.isTimeshiftSession() && copyVideo && !encodeVideo &&
+	if resumeFrom == 0 && session.isTimeshiftSession() && !session.LiveTuning.NoTimeshiftBacklog && copyVideo && !encodeVideo &&
 		hlsInput && proxyBody == nil && !session.LiveTuning.HDHomeRunInput && session.LiveProvider != "stremio" &&
 		strings.TrimSpace(session.LiveTuning.ProxyURL) == "" {
 		// The part of the source's own DVR window the timeshift window covers (hls_live_backlog.go);

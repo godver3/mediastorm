@@ -5458,6 +5458,8 @@ func (h *VideoHandler) StartLiveHLSSession(w http.ResponseWriter, r *http.Reques
 		EncodeMPEG2Video: hdHomeRunInput && strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("format")), "hls"),
 		TimeshiftWindow:  timeshiftWindow,
 		WebVideoCopy:     parseOptionalBool(r.URL.Query().Get("videoCopy")),
+		// timeshiftBacklog=0: the window only from the tune-in on (no backlog).
+		NoTimeshiftBacklog: strings.TrimSpace(r.URL.Query().Get("timeshiftBacklog")) == "0",
 	}
 	playbackTarget := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("target")))
 	clientID := requestClientID(r)
