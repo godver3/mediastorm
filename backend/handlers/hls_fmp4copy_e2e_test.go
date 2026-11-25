@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestStableCopyFMP4EndToEnd runs a real stable copy session in fMP4 on a
@@ -372,5 +373,116 @@ func TestWebPlayerStableCopyOrFallback(t *testing.T) {
 	defer m.CleanupSession(session.ID)
 	if session.usesStableCopyTimeline() || session.CastMode || session.PlaybackTarget != "web" || session.StartOffset != 30 {
 		t.Fatalf("h264-only browser: stable=%v cast=%v target=%q start=%v", session.usesStableCopyTimeline(), session.CastMode, session.PlaybackTarget, session.StartOffset)
+	}
+}
+
+// TestWebPlayerCopiesBroadcastAAC covers a recording as the web player plays it: H.264 with AAC
+// stereo in MPEG-TS keeps its audio as it is (no AAC re-encode), while 5.1 AAC becomes stereo.
+func TestWebPlayerCopiesBroadcastAAC(t *testing.T) {
+	if os.Getenv("MEDIASTORM_FFMPEG_E2E") != "1" {
+		t.Skip("set MEDIASTORM_FFMPEG_E2E=1 to run against ffmpeg")
+	}
+	for _, tc := range []struct {
+		name     string
+		channels string
+		wantAAC  bool
+	}{{"stereo", "2", false}, {"surround", "6", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			src := filepath.Join(dir, "rec.ts")
+			gen := exec.Command("ffmpeg", "-nostdin", "-loglevel", "error",
+				"-f", "lavfi", "-i", "testsrc2=size=640x360:rate=25",
+				"-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000",
+				"-t", "60", "-map", "0:v", "-map", "1:a",
+				"-c:v", "libx264", "-preset", "ultrafast", "-g", "50",
+				"-c:a", "aac", "-ac", tc.channels, "-f", "mpegts", src)
+			if out, err := gen.CombinedOutput(); err != nil {
+				t.Fatalf("generate: %v %s", err, out)
+			}
+			files := httptest.NewServer(http.FileServer(http.Dir(dir)))
+			defer files.Close()
+			sourceURL := files.URL + "/rec.ts"
+			m := NewHLSManager(filepath.Join(dir, "hls"), "ffmpeg", "ffprobe", nil)
+			// What /watch sends: its browser capabilities, and forceAAC no longer set. ForceVideoCopy
+			// only lets a remote MPEG-TS be sampled like a local recording; the audio is decided the same.
+			caps := &HLSClientCaps{TSVideo: []string{"h264"}, TSAudio: []string{"aac", "mp3"}, FMP4Video: []string{"h264"}, FMP4Audio: []string{"aac", "mp3"}, MaxAudioChannels: 2, WebFallback: true, ForceVideoCopy: true}
+			session, err := m.CreateSession(withHLSClientCaps(context.Background(), caps), sourceURL, sourceURL, false, "", false, false, 0, 0, -1, -1, "p", "p", "127.0.0.1", false, "", "web-stable", 60, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer m.CleanupSession(session.ID)
+			if !session.usesStableCopyTimeline() {
+				t.Fatalf("not a stable copy: %+v", session.CopyPlan)
+			}
+			rec := httptest.NewRecorder()
+			m.ServeSegment(rec, httptest.NewRequest(http.MethodGet, "/segment0.ts", nil), session.ID, "segment0.ts")
+			if rec.Code != http.StatusOK {
+				t.Fatalf("segment0.ts: %d", rec.Code)
+			}
+			session.mu.RLock()
+			forced := session.forceAAC
+			session.mu.RUnlock()
+			if forced != tc.wantAAC {
+				t.Fatalf("audio converted to AAC = %v, want %v", forced, tc.wantAAC)
+			}
+			ts := filepath.Join(dir, "seg0.ts")
+			writeConcat(t, ts, rec.Body.Bytes())
+			if streams := ffprobeOut(t, "-select_streams", "a:0", "-show_entries", "stream=codec_name,channels", "-of", "csv=p=0", ts); !strings.Contains(streams, "aac,2") {
+				t.Fatalf("segment audio: %s, want stereo AAC", streams)
+			}
+		})
+	}
+}
+
+// TestWebPlayerFallbackConvertsAudio covers a /watch session that cannot be a stable copy (here:
+// the client refused the copy, as after a decode failure): it falls back to a web session, which
+// converts the source's AC-3 to stereo AAC in MPEG-TS although the player no longer asks for
+// forceAAC.
+func TestWebPlayerFallbackConvertsAudio(t *testing.T) {
+	if os.Getenv("MEDIASTORM_FFMPEG_E2E") != "1" {
+		t.Skip("set MEDIASTORM_FFMPEG_E2E=1 to run against ffmpeg")
+	}
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src.mkv")
+	gen := exec.Command("ffmpeg", "-nostdin", "-loglevel", "error",
+		"-f", "lavfi", "-i", "testsrc2=size=640x360:rate=25",
+		"-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000",
+		"-t", "30", "-map", "0:v", "-map", "1:a",
+		"-c:v", "libx264", "-preset", "ultrafast", "-g", "50",
+		"-c:a", "ac3", "-ac", "6", src)
+	if out, err := gen.CombinedOutput(); err != nil {
+		t.Fatalf("generate: %v %s", err, out)
+	}
+	files := httptest.NewServer(http.FileServer(http.Dir(dir)))
+	defer files.Close()
+	sourceURL := files.URL + "/src.mkv"
+	m := NewHLSManager(filepath.Join(dir, "hls"), "ffmpeg", "ffprobe", nil)
+	caps := &HLSClientCaps{TSVideo: []string{"h264"}, TSAudio: []string{"aac", "mp3"}, FMP4Video: []string{"h264"}, FMP4Audio: []string{"aac"}, MaxAudioChannels: 2, WebFallback: true, NoVideoCopy: true}
+	session, err := m.CreateSession(withHLSClientCaps(context.Background(), caps), sourceURL, sourceURL, false, "", false, false, 0, 0, -1, -1, "p", "p", "127.0.0.1", false, "", "web-stable", 30, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.CleanupSession(session.ID)
+	if session.usesStableCopyTimeline() {
+		t.Fatal("a refused copy still planned a stable copy")
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	var segment string
+	for segment == "" {
+		for _, name := range []string{"segment0.ts", "segment0.m4s"} {
+			if _, err := os.Stat(filepath.Join(session.OutputDir, name)); err == nil {
+				segment = name
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("no first segment")
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if segment != "segment0.ts" {
+		t.Fatalf("fallback segments are %s, want MPEG-TS", segment)
+	}
+	if streams := ffprobeOut(t, "-select_streams", "a:0", "-show_entries", "stream=codec_name,channels", "-of", "csv=p=0", filepath.Join(session.OutputDir, segment)); !strings.Contains(streams, "aac,2") {
+		t.Fatalf("fallback audio: %s, want stereo AAC", streams)
 	}
 }

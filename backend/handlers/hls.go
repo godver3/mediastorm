@@ -981,6 +981,41 @@ func selectedAudioStream(audioStreams []audioStreamInfo, audioTrackIndex int) (a
 	return audioStreams[0], true
 }
 
+// defaultAudioStream returns the audio stream startTranscoding maps when no
+// track is selected (or the selected one is missing): with TrueHD next to a
+// compatible track, the first compatible non-commentary stream (then any
+// compatible one); otherwise the first audio stream ("-map 0:a:0").
+func defaultAudioStream(audioStreams []audioStreamInfo, hasTrueHD, hasCompatibleAudio bool) (audioStreamInfo, bool) {
+	if len(audioStreams) == 0 {
+		return audioStreamInfo{}, false
+	}
+	if !hasTrueHD || !hasCompatibleAudio {
+		return audioStreams[0], true
+	}
+	compatible := map[string]bool{"aac": true, "ac3": true, "eac3": true, "mp3": true}
+	for _, commentaryToo := range []bool{false, true} {
+		for _, stream := range audioStreams {
+			if compatible[stream.Codec] && (commentaryToo || !isHLSCommentaryTrack(stream.Title)) {
+				return stream, true
+			}
+		}
+	}
+	return audioStreamInfo{}, false
+}
+
+// mappedAudioStream returns the audio stream startTranscoding maps: the
+// selected track when it exists, else defaultAudioStream.
+func mappedAudioStream(audioStreams []audioStreamInfo, audioTrackIndex int, hasTrueHD, hasCompatibleAudio bool) (audioStreamInfo, bool) {
+	if audioTrackIndex >= 0 {
+		for _, stream := range audioStreams {
+			if stream.Index == audioTrackIndex {
+				return stream, true
+			}
+		}
+	}
+	return defaultAudioStream(audioStreams, hasTrueHD, hasCompatibleAudio)
+}
+
 // directCastAudioNeedsAAC reports whether a direct Cast session must re-encode
 // its audio. Direct copy exists to skip the *video* re-encode; Dolby audio is
 // the most common reason a receiver accepts the load and then never starts
@@ -2079,6 +2114,11 @@ func (m *HLSManager) CreateSession(ctx context.Context, path string, originalPat
 					sessionID, len(starts), starts[len(starts)-1], plan.Codec, plan.FMP4)
 			}
 		}
+		if copySegmentStarts == nil && clientCaps.webFallback() {
+			// Following the file as a web session: the browser gets AAC (MPEG-TS segments), as
+			// for a finished recording without a stable copy below.
+			forceAAC = true
+		}
 	} else if normalizedPlaybackTarget == "web-stable" {
 		normalizedPlaybackTarget = "web"
 		if plan, ok := stableCopyEligible(probeData, hasDV, dvProfile, hasHDR, duration, clientCaps); ok {
@@ -2111,6 +2151,9 @@ func (m *HLSManager) CreateSession(ctx context.Context, path string, originalPat
 		}
 		if copySegmentStarts == nil && clientCaps.webFallback() {
 			log.Printf("[hls] session %s: no stable copy; playing as a web session (client fallback)", sessionID)
+			// A browser's web session gets AAC (MPEG-TS segments): the client asked for
+			// forceAAC only in case of a stable copy, which converts just what it must.
+			forceAAC = true
 		} else {
 			castMode = copySegmentStarts == nil
 		}
@@ -3658,8 +3701,10 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 	if stableCopyMode && !forceAAC {
 		// Browsers decode AAC (and MP3) natively but not AC-3/E-AC-3/DTS in
 		// MSE; only the audio is converted, the video stays copied. Clients
-		// that declared more HLS audio codecs keep those as they are.
-		if selected, ok := selectedAudioStream(audioStreams, session.AudioTrackIndex); !ok || (selected.Codec != "aac" && !session.passesAudio(selected.Codec)) {
+		// that declared more HLS audio codecs keep those as they are. AAC
+		// with more than two channels (or an unknown count) is converted to
+		// stereo for a browser too: MSE plays multichannel AAC unreliably.
+		if selected, ok := mappedAudioStream(audioStreams, session.AudioTrackIndex, hasTrueHD, hasCompatibleAudio); !ok || stableCopyAudioNeedsAAC(selected, session) {
 			forceAAC = true
 			session.mu.Lock()
 			session.forceAAC = true
@@ -4094,37 +4139,12 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 		// This ensures consistent behavior with the frontend's expectations and avoids
 		// the Expo Video player defaulting to the first track in a multi-track manifest
 		if hasTrueHD && hasCompatibleAudio {
-			// Find the first compatible audio stream (excluding TrueHD and commentary tracks)
+			// The first compatible audio stream (excluding TrueHD, commentary last)
 			log.Printf("[hls] session %s: no specific audio track selected, defaulting to first compatible stream", session.ID)
-			compatibleCodecs := map[string]bool{
-				"aac":  true,
-				"ac3":  true,
-				"eac3": true,
-				"mp3":  true,
-			}
-			mappedAudio := false
-			// First pass: find compatible non-commentary track
-			for _, stream := range audioStreams {
-				if compatibleCodecs[stream.Codec] && !isHLSCommentaryTrack(stream.Title) {
-					audioMap := fmt.Sprintf("0:%d", stream.Index)
-					args = append(args, "-map", audioMap)
-					log.Printf("[hls] session %s: mapped first compatible audio stream %d (codec=%s)",
-						session.ID, stream.Index, stream.Codec)
-					mappedAudio = true
-					break
-				}
-			}
-			// Second pass: fallback to any compatible track (including commentary)
-			if !mappedAudio {
-				for _, stream := range audioStreams {
-					if compatibleCodecs[stream.Codec] {
-						audioMap := fmt.Sprintf("0:%d", stream.Index)
-						args = append(args, "-map", audioMap)
-						log.Printf("[hls] session %s: mapped compatible audio stream %d (codec=%s, fallback including commentary)",
-							session.ID, stream.Index, stream.Codec)
-						break
-					}
-				}
+			if stream, ok := defaultAudioStream(audioStreams, hasTrueHD, hasCompatibleAudio); ok {
+				args = append(args, "-map", fmt.Sprintf("0:%d", stream.Index))
+				log.Printf("[hls] session %s: mapped first compatible audio stream %d (codec=%s)",
+					session.ID, stream.Index, stream.Codec)
 			}
 		} else {
 			// Map only the first audio stream

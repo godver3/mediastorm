@@ -7,6 +7,7 @@ type AudioStreamInfo struct {
 	Profile  string
 	Language string
 	Title    string
+	Channels int // 0 when unknown
 }
 
 // SubtitleStreamInfo contains subtitle stream metadata used during playback preparation.

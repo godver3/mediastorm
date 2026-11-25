@@ -6259,6 +6259,7 @@ func (h *VideoHandler) ProbeVideoMetadata(ctx context.Context, path string) (*Vi
 				Profile:  strings.TrimSpace(stream.Profile),
 				Language: normalizeTag(stream.Tags, "language"),
 				Title:    normalizeTag(stream.Tags, "title"),
+				Channels: stream.Channels,
 			}
 			result.AudioStreams = append(result.AudioStreams, info)
 
@@ -6418,6 +6419,7 @@ func (h *VideoHandler) ProbeVideoFull(ctx context.Context, path string) (*VideoF
 				Profile:  strings.TrimSpace(s.Profile),
 				Language: normalizeTag(s.Tags, "language"),
 				Title:    normalizeTag(s.Tags, "title"),
+				Channels: s.Channels,
 			}
 			result.AudioStreams = append(result.AudioStreams, info)
 
@@ -6515,6 +6517,7 @@ func (h *VideoHandler) unifiedProbeToVideoFull(cached *UnifiedProbeResult) *Vide
 			Profile:  as.Profile,
 			Language: as.Language,
 			Title:    as.Title,
+			Channels: as.Channels,
 		})
 	}
 
@@ -6563,6 +6566,7 @@ func (h *VideoHandler) videoFullToUnifiedProbe(result *VideoFullResult) *Unified
 			Profile:  as.Profile,
 			Language: as.Language,
 			Title:    as.Title,
+			Channels: as.Channels,
 		})
 	}
 
