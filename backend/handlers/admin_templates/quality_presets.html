@@ -90,6 +90,14 @@
     .qp-master-title { font-weight: 600; font-size: 1.05rem; }
     .qp-master.off { border-color: rgba(255,255,255,0.08); }
     body.qp-off #qpBody { opacity: 0.45; }
+    /* Unsaved-changes bar, as on the Settings page */
+    .qp-save-bar[hidden] { display: none; }
+    .qp-save-bar { position: sticky; bottom: 1rem; z-index: 15; display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.75rem 0.85rem; border: 1px solid rgba(245, 158, 11, 0.5); border-radius: 10px; background: rgba(38, 28, 14, 0.97); box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35); }
+    .qp-save-bar strong { color: #fbbf24; font-size: 0.8125rem; }
+    .qp-save-bar p { margin: 0.15rem 0 0; color: var(--text-secondary); font-size: 0.6875rem; }
+    .qp-save-bar-actions { display: flex; gap: 0.5rem; }
+    .qp-save-bar-actions .btn { min-height: 44px; }
+    @media (max-width: 640px) { .qp-save-bar { bottom: 0.5rem; align-items: stretch; flex-direction: column; } .qp-save-bar-actions .btn { flex: 1; } }
 </style>
 
 <div class="page-header" data-page-group="Settings">
@@ -236,6 +244,16 @@
     </div>
 </div>
 
+<div id="qpSaveBar" class="qp-save-bar" hidden>
+    <div>
+        <strong>Unsaved changes</strong>
+        <p id="qpSaveBarCopy">Nothing is applied until you save.</p>
+    </div>
+    <div class="qp-save-bar-actions">
+        <button class="btn btn-secondary" type="button" id="qpDiscard">Discard</button>
+        <button class="btn btn-primary" type="button" id="qpSaveAll">Save changes</button>
+    </div>
+</div>
 <div class="qp-modal-backdrop" id="qpModal">
     <div class="qp-modal" role="dialog" aria-modal="true" aria-labelledby="qpModalTitle" aria-describedby="qpModalHelp">
         <h3 id="qpModalTitle" style="margin-top:0;">Edit</h3>
@@ -263,6 +281,48 @@ function when(v) { if (!v) return '—'; const d = new Date(v); return Number.is
 function short(c) { if (!c) return '—'; return String(c).split(',').map(p => { const i = p.lastIndexOf('@'); const s = i >= 0 ? p.slice(i + 1) : p; return (i >= 0 ? p.slice(0, i) + '@' : '') + s.replace(/^sha256:/, '').slice(0, 10); }).join(', '); }
 function toast(msg, bad) { const t = $('qpToast'); t.textContent = msg; t.style.display = 'block'; t.style.borderColor = bad ? '#dc2626' : 'var(--border)'; clearTimeout(toast.t); toast.t = setTimeout(() => t.style.display = 'none', bad ? 9000 : 4000); }
 function forMedia(app) { return app === 'radarr' ? 'Movies' : 'Series'; }
+
+// ---------- unsaved changes ----------
+// As on the Settings page, edits are staged and saved together from the
+// sticky bar (or a section's own Save button); nothing is sent on change.
+// Each entry's prepare() reads the edited values and returns the request.
+// A section with staged edits is not re-rendered until they are saved or
+// discarded, so a save elsewhere on the page doesn't wipe them.
+const pending = new Map();
+function staged(prefix) { for (const k of pending.keys()) if (k === prefix || k.startsWith(prefix + ':')) return true; return false; }
+function stage(key, prepare) { pending.set(key, prepare); updateSaveBar(); }
+function unstage(prefix) { for (const k of [...pending.keys()]) if (k === prefix || k.startsWith(prefix + ':')) pending.delete(k); updateSaveBar(); }
+function updateSaveBar() {
+    $('qpSaveBar').hidden = pending.size === 0;
+    $('qpSaveBarCopy').textContent = (pending.size === 1 ? '1 section changed' : pending.size + ' sections changed') + '. Nothing is applied until you save.';
+}
+// blockedByStaged stops an action that would replace staged edits.
+function blockedByStaged(prefix) {
+    if (!staged(prefix)) return false;
+    toast('Save or discard your unsaved changes first', true);
+    return true;
+}
+async function savePending(keys) {
+    // Read every staged value first: each save re-renders parts of the page.
+    const jobs = keys.filter(k => pending.has(k)).map(k => [k, pending.get(k)()]);
+    let ok = true;
+    for (const [k, job] of jobs) {
+        if (await job() === undefined) { ok = false; break; }
+        pending.delete(k);
+    }
+    updateSaveBar();
+    await refreshAll();
+    if (ok) toast('Changes saved');
+    return ok;
+}
+function saveSection(key, prepare) { pending.set(key, prepare); return savePending([key]); }
+async function refreshAll() {
+    await loadList();
+    if (!state.current) return;
+    const d = await run(() => api('/' + encodeURIComponent(state.current.preset.id)));
+    if (d) { state.current = d; renderDetail(); }
+}
+function renderDetail() { renderOverview(); renderQualities(); renderFormats(); }
 
 async function api(path, opts) {
     opts = opts || {};
@@ -327,8 +387,13 @@ async function loadList() {
     const data = await run(() => api(qs ? '?' + qs : ''));
     if (!data) return;
     state.list = data;
-    state.defaultHidden = new Set(data.hiddenByDefault || []);
-    state.sources = data.sources || [];
+    // Profile cards read the default-hidden set, so restore it before them.
+    if (!staged('selection')) state.defaultHidden = new Set(data.hiddenByDefault || []);
+    if (!staged('master')) renderMaster(!data.disabled);
+    if (!staged('sources')) { state.sources = data.sources || []; renderSources(); }
+    if (!staged('assign')) renderAssignments();
+    renderRows();
+    if (staged('selection')) return;
     $('qpMovieSel').innerHTML = presetOptions('radarr', data.moviePreset || '');
     $('qpSeriesSel').innerHTML = presetOptions('sonarr', data.seriesPreset || '');
     const sameAsNormal = v => `<option value=""${v ? '' : ' selected'}>Same as the normal preset</option>`;
@@ -337,13 +402,9 @@ async function loadList() {
     $('qpAnimeOnly').checked = !!data.animeOnlyInPickers;
     $('qpAnimeMovieSel').disabled = $('qpAnimeSeriesSel').disabled = $('qpAnimeOnly').disabled = !IS_ADMIN;
     $('qpAllowOverride').checked = !!data.allowRequestOverride;
-    renderMaster(!data.disabled);
     $('qpMovieSel').disabled = $('qpSeriesSel').disabled = $('qpAllowOverride').disabled = !IS_ADMIN;
     renderPicker();
     $('qpSaveSelection').style.display = IS_ADMIN ? '' : 'none';
-    renderAssignments();
-    renderRows();
-    renderSources();
 }
 
 // Version picker choices: "simple" plus every preset, checked when offered.
@@ -409,6 +470,7 @@ $('qpPickerList').addEventListener('click', ev => {
     if (i < 0 || j < 0 || j >= order.length) return;
     [order[i], order[j]] = [order[j], order[i]];
     renderPicker(order);
+    stageSelection();
 });
 $('qpOfferTabs').addEventListener('click', ev => {
     const btn = ev.target.closest('[data-offer-tab]');
@@ -590,7 +652,9 @@ $('qpAssignRows').addEventListener('change', ev => {
     }
     if (t.hasAttribute('data-kind')) t.dataset.dirty = '1';
     markDirty(card);
+    stageAssign(card);
 });
+function stageAssign(card) { stage('assign:' + card.getAttribute('data-user'), () => prepareAssign(card)); }
 
 $('qpAssignRows').addEventListener('click', async ev => {
     const followBtn = ev.target.closest('[data-follow],[data-follow-all]');
@@ -602,11 +666,18 @@ $('qpAssignRows').addEventListener('click', async ev => {
         boxes.filter(b => b.getAttribute('data-choice') || boxChoice(b)).forEach(followRecommendation);
         card.dataset.hideDirty = '1';
         markDirty(card);
+        stageAssign(card);
         return;
     }
     const id = ev.target.getAttribute('data-assign');
     if (!id) return;
     const row = ev.target.closest('[data-user]');
+    await saveSection('assign:' + row.getAttribute('data-user'), () => prepareAssign(row));
+});
+
+// prepareAssign reads a profile card; the request sends only what changed on it.
+function prepareAssign(row) {
+    const id = row.querySelector('[data-assign]').getAttribute('data-assign');
     // Only the defaults changed on this card are sent (omitted ones stay as
     // stored, also when the profile changed them since this page loaded).
     const body = { userId: id };
@@ -624,29 +695,35 @@ $('qpAssignRows').addEventListener('click', async ev => {
         body.pickerPresets = checked.length === boxes.length ? null : checked;
     }
     const hideBoxes = [...row.querySelectorAll('[data-picker-hide]')];
-    if (hideBoxes.length && row.dataset.hideDirty) {
-        // Choices for presets without a box here (not offered on this page)
-        // are kept as stored.
-        // The stored choices as they are now, not as this page loaded them.
-        const fresh = await run(() => api('?userId=' + encodeURIComponent(id)));
-        if (!fresh) return;
-        const a = ((fresh.assignments || {})[id]) || {};
-        const onCard = new Set(hideBoxes.map(b => b.getAttribute('data-picker-hide')));
-        const known = new Set(['simple'].concat((state.list.presets || []).map(p => p.id)));
-        const keep = list => (list || []).filter(x => !onCard.has(x) && known.has(x));
-        const made = profileChoices(hideBoxes);
-        const hidden = keep(a.hiddenPresets).concat(made.hiddenPresets || []);
-        const shown = keep(a.shownPresets).concat(made.shownPresets || []);
-        body.hiddenPresets = hidden.length ? hidden : null;
-        body.shownPresets = shown.length ? shown : null;
-    }
-    if (await run(() => api('/assign', { method: 'PUT', body }), 'Profile updated')) loadList();
-});
+    const hideDirty = hideBoxes.length && row.dataset.hideDirty;
+    const onCard = new Set(hideBoxes.map(b => b.getAttribute('data-picker-hide')));
+    const made = hideDirty ? profileChoices(hideBoxes) : null;
+    return async () => {
+        if (hideDirty) {
+            // Choices for presets without a box here (not offered on this page)
+            // are kept as stored.
+            // The stored choices as they are now, not as this page loaded them.
+            const fresh = await run(() => api('?userId=' + encodeURIComponent(id)));
+            if (!fresh) return undefined;
+            const a = ((fresh.assignments || {})[id]) || {};
+            const known = new Set(['simple'].concat((state.list.presets || []).map(p => p.id)));
+            const keep = list => (list || []).filter(x => !onCard.has(x) && known.has(x));
+            const hidden = keep(a.hiddenPresets).concat(made.hiddenPresets || []);
+            const shown = keep(a.shownPresets).concat(made.shownPresets || []);
+            body.hiddenPresets = hidden.length ? hidden : null;
+            body.shownPresets = shown.length ? shown : null;
+        }
+        return run(() => api('/assign', { method: 'PUT', body }));
+    };
+}
 
-$('qpSaveSelection').addEventListener('click', ev => busy(ev.currentTarget, async () => {
-    await run(() => api('/selection', { method: 'PUT', body: { moviePreset: $('qpMovieSel').value, seriesPreset: $('qpSeriesSel').value, allowRequestOverride: $('qpAllowOverride').checked, pickerPresets: pickerSelection(), hiddenByDefault: pickerSelection().filter(id => state.defaultHidden.has(id)), animeMoviePreset: $('qpAnimeMovieSel').value, animeSeriesPreset: $('qpAnimeSeriesSel').value, animeOnlyInPickers: $('qpAnimeOnly').checked } }), 'Active presets saved');
-    await loadList();
-}));
+function prepareSelection() {
+    const body = { moviePreset: $('qpMovieSel').value, seriesPreset: $('qpSeriesSel').value, allowRequestOverride: $('qpAllowOverride').checked, pickerPresets: pickerSelection(), hiddenByDefault: pickerSelection().filter(id => state.defaultHidden.has(id)), animeMoviePreset: $('qpAnimeMovieSel').value, animeSeriesPreset: $('qpAnimeSeriesSel').value, animeOnlyInPickers: $('qpAnimeOnly').checked };
+    return () => run(() => api('/selection', { method: 'PUT', body }));
+}
+function stageSelection() { if (IS_ADMIN) stage('selection', prepareSelection); }
+$('qpServerSettings').addEventListener('change', stageSelection);
+$('qpSaveSelection').addEventListener('click', ev => busy(ev.currentTarget, () => saveSection('selection', prepareSelection)));
 
 function statusBadges(p) {
     let b = '';
@@ -739,6 +816,12 @@ async function afterImport(d, note) {
     }
     if ($('qpImportOffer').checked) body.pickerPresets = ((state.list && state.list.pickerPresets) || []).concat(p.id);
     let msg = 'Imported ' + p.name;
+    // Staged Active presets edits would overwrite this choice when saved.
+    if (Object.keys(body).length && staged('selection')) {
+        toast(msg + '. Not put to use: save or discard your unsaved Active presets changes first.', true);
+        await loadList();
+        return;
+    }
     if (Object.keys(body).length && await run(() => api('/selection', { method: 'PUT', body }))) {
         msg += body.pickerPresets && Object.keys(body).length === 1 ? ' and offered in version pickers' : ' and put to use';
     }
@@ -789,31 +872,42 @@ function readSources() {
         return s;
     });
 }
-$('qpSourceRows').addEventListener('click', ev => { const i = ev.target.getAttribute('data-del'); if (i === null) return; state.sources = readSources(); state.sources.splice(Number(i), 1); renderSources(); });
-$('qpSourceRows').addEventListener('change', ev => { if (ev.target.getAttribute('data-f') === 'type') { state.sources = readSources(); renderSources(); } });
-$('qpSourceAdd').addEventListener('click', () => { state.sources = readSources(); state.sources.push({ id: 'source-' + (state.sources.length + 1), name: 'New source', type: 'github', repo: '', ref: 'master', priority: state.sources.length, enabled: true }); renderSources(); });
-$('qpSourceSave').addEventListener('click', async () => { const r = await run(() => api('/sources', { method: 'PUT', body: readSources() }), 'Sources saved'); if (r) { state.sources = r; renderSources(); loadCatalog(); } });
+function prepareSources() {
+    const body = readSources();
+    return async () => { const r = await run(() => api('/sources', { method: 'PUT', body })); if (r) { state.sources = r; loadCatalog(); } return r; };
+}
+function stageSources() { stage('sources', prepareSources); }
+$('qpSourceRows').addEventListener('click', ev => { const i = ev.target.getAttribute('data-del'); if (i === null) return; state.sources = readSources(); state.sources.splice(Number(i), 1); renderSources(); stageSources(); });
+$('qpSourceRows').addEventListener('change', ev => { if (ev.target.getAttribute('data-f') === 'type') { state.sources = readSources(); renderSources(); } stageSources(); });
+$('qpSourceRows').addEventListener('input', stageSources);
+$('qpSourceAdd').addEventListener('click', () => { state.sources = readSources(); state.sources.push({ id: 'source-' + (state.sources.length + 1), name: 'New source', type: 'github', repo: '', ref: 'master', priority: state.sources.length, enabled: true }); renderSources(); stageSources(); });
+$('qpSourceSave').addEventListener('click', ev => busy(ev.currentTarget, () => saveSection('sources', prepareSources)));
 
 // ---------- detail ----------
 async function openPreset(id) {
+    if (staged('preset') && state.current && state.current.preset.id !== id) {
+        if (!confirm('Discard your unsaved changes to "' + (state.current.preset.overrides.name || state.current.preset.name) + '"?')) return;
+        unstage('preset');
+    }
     const d = await run(() => api('/' + encodeURIComponent(id)));
     if (!d) return;
     state.current = d;
     $('qpDetail').style.display = '';
     $('qpDetailTitle').textContent = d.preset.overrides.name || d.preset.name;
-    renderOverview(); renderQualities(); renderFormats();
+    renderDetail();
     renderRows();
     $('qpDetail').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 async function mutate(path, opts, msg) {
     const d = await run(() => api('/' + encodeURIComponent(state.current.preset.id) + path, opts), msg);
-    if (d && d.preset) { state.current = d; renderOverview(); renderQualities(); renderFormats(); loadList(); }
+    if (d && d.preset) { state.current = d; renderDetail(); loadList(); }
     return d;
 }
 function override(path, value, msg) { return mutate('/override', { method: 'PUT', body: { path, value } }, msg || 'Saved'); }
 function clearOverride(path) { return mutate('/override?path=' + encodeURIComponent(path), { method: 'DELETE' }, 'Reverted to upstream'); }
 
 function renderOverview() {
+    if (staged('preset:overview')) return;
     const d = state.current, p = d.preset, s = p.sync;
     const ro = !IS_ADMIN ? 'disabled' : '';
     const errs = (d.errors || []).map(e => `<div class="qp-badge bad" style="white-space:normal;">${esc(e)}</div>`).join(' ');
@@ -925,21 +1019,39 @@ function fallbackChoices(p) {
     return choices;
 }
 
-$('qpOverview').addEventListener('change', async ev => {
+function prepareOverviewSettings() {
+    const body = {};
+    if ($('qpFallback')) body.fallback = $('qpFallback').value;
+    if ($('qpAudience')) body.audience = $('qpAudience').value;
+    return () => mutate('/settings', { method: 'PUT', body }, '');
+}
+function prepareSync() {
+    const p = state.current.preset;
+    const follow = {};
+    $('qpOverview').querySelectorAll('[data-follow]').forEach(c => follow[c.getAttribute('data-follow')] = c.checked);
+    const sync = Object.assign({}, p.sync, { mode: $('qpSyncMode').value, pinnedCommit: $('qpSyncPin').value.trim(), schedule: $('qpSyncSchedule').value, newFormats: $('qpSyncNew').value, follow });
+    if (sync.mode === 'pinned' && !sync.pinnedCommit) sync.pinnedCommit = p.upstream.commit;
+    return () => mutate('/settings', { method: 'PUT', body: { sync } }, '');
+}
+const syncFieldIds = new Set(['qpSyncMode', 'qpSyncPin', 'qpSyncSchedule', 'qpSyncNew']);
+function stageOverview(ev) {
     if (!state.current) return;
-    if (ev.target.id === 'qpFallback') {
-        await mutate('/settings', { method: 'PUT', body: { fallback: ev.target.value } }, 'Saved');
-        return;
-    }
-    if (ev.target.id !== 'qpAudience') return;
-    await mutate('/settings', { method: 'PUT', body: { audience: ev.target.value } }, 'Saved');
-});
+    const t = ev.target;
+    if (t.id === 'qpFallback' || t.id === 'qpAudience') stage('preset:overview:settings', prepareOverviewSettings);
+    else if (syncFieldIds.has(t.id) || t.hasAttribute('data-follow')) stage('preset:overview:sync', prepareSync);
+}
+$('qpOverview').addEventListener('change', stageOverview);
+$('qpOverview').addEventListener('input', stageOverview);
 
 $('qpOverview').addEventListener('click', async ev => {
     const t = ev.target;
     const act = t.getAttribute('data-act');
     const p = state.current && state.current.preset;
     if (!p) return;
+    if (act === 'savesync') { await busy(t, () => saveSection('preset:overview:sync', prepareSync)); return; }
+    // Everything else here changes the preset on the server and re-renders it.
+    const changes = act && act !== 'dryrun' || t.hasAttribute('data-conflict') || t.hasAttribute('data-review') || t.hasAttribute('data-rollback');
+    if (changes && blockedByStaged('preset')) return;
     if (act === 'check' || act === 'syncnow') {
         await busy(t, async () => {
             const r = await run(() => api('/' + encodeURIComponent(p.id) + '/check', { method: 'POST', body: { apply: act === 'syncnow' } }));
@@ -955,6 +1067,9 @@ $('qpOverview').addEventListener('click', async ev => {
     } else if (act === 'apply') { await mutate('/pending', { method: 'POST' }, 'Update applied'); }
     else if (act === 'discard') { await mutate('/pending', { method: 'DELETE' }, 'Update discarded'); }
     else if (act === 'delete') {
+        // Staged Active presets or profile choices may name this preset;
+        // saving them after the delete would fail.
+        if (blockedByStaged('selection') || blockedByStaged('assign')) return;
         if (!confirm('Delete preset "' + (p.overrides.name || p.name) + '"? The server stops using it; profiles and devices that chose it use the next level\'s preset instead.')) return;
         await run(() => api('/' + encodeURIComponent(p.id), { method: 'DELETE' }), 'Preset deleted');
         state.current = null; $('qpDetail').style.display = 'none'; loadList();
@@ -966,12 +1081,6 @@ $('qpOverview').addEventListener('click', async ev => {
     } else if (act === 'rename') {
         const name = prompt('New name', p.overrides.name || p.name);
         if (name) await mutate('/settings', { method: 'PUT', body: { name } }, 'Renamed');
-    } else if (act === 'savesync') {
-        const follow = {};
-        $('qpOverview').querySelectorAll('[data-follow]').forEach(c => follow[c.getAttribute('data-follow')] = c.checked);
-        const sync = Object.assign({}, p.sync, { mode: $('qpSyncMode').value, pinnedCommit: $('qpSyncPin').value.trim(), schedule: $('qpSyncSchedule').value, newFormats: $('qpSyncNew').value, follow });
-        if (sync.mode === 'pinned' && !sync.pinnedCommit) sync.pinnedCommit = p.upstream.commit;
-        await mutate('/settings', { method: 'PUT', body: { sync } }, 'Sync settings saved');
     } else if (act === 'dryrun') {
         openModal('Preview ranking change', 'Release names to compare, one per line (the Test tab\'s list is filled in).', $('qpTestTitles').value || '', async text => {
             const titles = text.split('\n').map(s => s.trim()).filter(Boolean);
@@ -1002,6 +1111,7 @@ function rankList(items) { return '<ol class="qp-mono" style="padding-left:1.2re
 
 // ---------- qualities ----------
 function renderQualities() {
+    if (staged('preset:qualities')) return;
     const d = state.current, p = d.preset, prof = d.resolved ? d.resolved.profile : p.upstream.profile;
     const ro = !IS_ADMIN ? 'disabled' : '';
     const items = prof.items || [];
@@ -1034,26 +1144,42 @@ $('qpQualities').addEventListener('click', async ev => {
         const nodes = [...list.children];
         if (j > i) list.insertBefore(nodes[j], nodes[i]); else list.insertBefore(nodes[i], nodes[j]);
         [...list.children].forEach((n, k) => n.setAttribute('data-i', k));
+        stage('preset:qualities:items', prepareItems);
         return;
     }
-    if (t.id === 'qpItemsSave') { syncItemChecks(); await override('items', state.items.map(it => ({ name: it.name, allowed: it.allowed, items: it.items || undefined })), 'Qualities saved'); }
-    if (t.id === 'qpItemsReset') await clearOverride('items');
-    if (t.id === 'qpOptsSave') {
-        // Read every field first: each save re-renders the form.
-        const profile = state.current.resolved.profile;
-        const min = Number($('qpMinScore').value);
-        const lang = $('qpLang') ? $('qpLang').value : null;
-        const settings = { enforceSizeLimits: $('qpEnforce').checked, preferredProtocol: $('qpProto').value, propers: $('qpPropers').value,
-            multiLanguages: $('qpMulti').value.split(',').map(s => s.trim()).filter(Boolean) };
-        if (min !== profile.minFormatScore) await override('minFormatScore', min);
-        if (lang !== null && lang !== (profile.language || '')) await override('language', lang);
-        await mutate('/settings', { method: 'PUT', body: settings }, 'Options saved');
-    }
+    if (t.id === 'qpItemsSave') await busy(t, () => saveSection('preset:qualities:items', prepareItems));
+    if (t.id === 'qpItemsReset' && !blockedByStaged('preset:qualities')) await clearOverride('items');
+    if (t.id === 'qpOptsSave') await busy(t, () => saveSection('preset:qualities:options', prepareOptions));
 });
+function prepareItems() {
+    syncItemChecks();
+    const value = state.items.map(it => ({ name: it.name, allowed: it.allowed, items: it.items || undefined }));
+    return () => mutate('/override', { method: 'PUT', body: { path: 'items', value } }, '');
+}
+function prepareOptions() {
+    const profile = state.current.resolved.profile;
+    const min = Number($('qpMinScore').value);
+    const lang = $('qpLang') ? $('qpLang').value : null;
+    const settings = { enforceSizeLimits: $('qpEnforce').checked, preferredProtocol: $('qpProto').value, propers: $('qpPropers').value,
+        multiLanguages: $('qpMulti').value.split(',').map(s => s.trim()).filter(Boolean) };
+    return async () => {
+        if (min !== profile.minFormatScore && await mutate('/override', { method: 'PUT', body: { path: 'minFormatScore', value: min } }, '') === undefined) return undefined;
+        if (lang !== null && lang !== (profile.language || '') && await mutate('/override', { method: 'PUT', body: { path: 'language', value: lang } }, '') === undefined) return undefined;
+        return mutate('/settings', { method: 'PUT', body: settings }, '');
+    };
+}
+function stageQualities(ev) {
+    const t = ev.target;
+    if (t.closest('#qpItemList')) stage('preset:qualities:items', prepareItems);
+    else if (['qpMinScore', 'qpLang', 'qpPropers', 'qpProto', 'qpMulti', 'qpEnforce'].includes(t.id)) stage('preset:qualities:options', prepareOptions);
+}
+$('qpQualities').addEventListener('change', stageQualities);
+$('qpQualities').addEventListener('input', stageQualities);
 function syncItemChecks() { [...$('qpItemList').children].forEach(li => { const i = Number(li.getAttribute('data-i')); state.items[i].allowed = li.querySelector('input[type=checkbox]').checked; }); }
 
 // ---------- formats ----------
 function renderFormats() {
+    if (staged('preset:formats')) return;
     const d = state.current, p = d.preset, r = d.resolved;
     const ro = !IS_ADMIN ? 'disabled' : '';
     const groups = (r && r.groups) || [];
@@ -1093,40 +1219,68 @@ function findFormat(key) {
     const p = state.current.preset;
     return (p.overrides.formats && p.overrides.formats[key]) || (p.upstream.formats && p.upstream.formats[key]);
 }
-$('qpFormats').addEventListener('change', async ev => {
-    const t = ev.target;
-    if (t.hasAttribute('data-score')) await override('score:' + t.getAttribute('data-score'), Number(t.value), 'Score saved');
-    if (t.hasAttribute('data-enabled')) {
-        const key = t.getAttribute('data-enabled');
-        if ((state.current.preset.reviewFormats || []).includes(key)) await mutate('/review', { method: 'POST', body: { keys: [key], enable: t.checked } }, 'Saved');
-        else await mutate('/formats/' + encodeURIComponent(key) + '/disabled', { method: 'PUT', body: { disabled: !t.checked } }, t.checked ? 'Format on' : 'Format off');
-    }
-    if (t.hasAttribute('data-follow-fmt')) {
-        const p = state.current.preset, key = t.getAttribute('data-key'), kind = t.getAttribute('data-follow-fmt');
-        const sync = JSON.parse(JSON.stringify(p.sync));
-        sync.perFormat = sync.perFormat || {};
+// runAll sends requests one after another and stops at the first failure.
+async function runAll(calls) {
+    let r = null;
+    for (const call of calls) { r = await call(); if (r === undefined) return undefined; }
+    return r;
+}
+function prepareScores() {
+    const calls = [...$('qpFormats').querySelectorAll('[data-score][data-dirty]')].map(el => {
+        const path = 'score:' + el.getAttribute('data-score'), value = Number(el.value);
+        return () => mutate('/override', { method: 'PUT', body: { path, value } }, '');
+    });
+    return () => runAll(calls);
+}
+function prepareEnabled() {
+    const review = state.current.preset.reviewFormats || [];
+    const calls = [...$('qpFormats').querySelectorAll('[data-enabled][data-dirty]')].map(el => {
+        const key = el.getAttribute('data-enabled'), on = el.checked;
+        return review.includes(key)
+            ? () => mutate('/review', { method: 'POST', body: { keys: [key], enable: on } }, '')
+            : () => mutate('/formats/' + encodeURIComponent(key) + '/disabled', { method: 'PUT', body: { disabled: !on } }, '');
+    });
+    return () => runAll(calls);
+}
+function prepareFollow() {
+    const sync = JSON.parse(JSON.stringify(state.current.preset.sync));
+    sync.perFormat = sync.perFormat || {};
+    $('qpFormats').querySelectorAll('[data-follow-fmt][data-dirty]').forEach(el => {
+        const key = el.getAttribute('data-key'), kind = el.getAttribute('data-follow-fmt');
         const pf = sync.perFormat[key] || {};
-        if (t.value === '') delete pf[kind]; else pf[kind] = t.value === 'yes';
+        if (el.value === '') delete pf[kind]; else pf[kind] = el.value === 'yes';
         if (Object.keys(pf).length) sync.perFormat[key] = pf; else delete sync.perFormat[key];
-        await mutate('/settings', { method: 'PUT', body: { sync } }, 'Sync policy saved');
+    });
+    return () => mutate('/settings', { method: 'PUT', body: { sync } }, '');
+}
+function prepareGroups() {
+    const changes = [];
+    for (const cb of $('qpFormats').querySelectorAll('[data-group]')) {
+        const id = cb.getAttribute('data-group');
+        const formats = {};
+        $('qpFormats').querySelectorAll(`[data-group-format="${CSS.escape(id)}"]`).forEach(f => { if (!f.disabled) formats[f.getAttribute('data-key')] = f.checked; });
+        const g = state.current.resolved.groups.find(x => x.trashId === id);
+        if (cb.checked !== g.enabled || g.formats.some(f => !f.required && formats[f.trashId] !== f.selected)) {
+            changes.push({ id, value: { enabled: cb.checked, formats } });
+        }
     }
-});
+    return () => runAll(changes.map(c => () => mutate('/override', { method: 'PUT', body: { path: 'group:' + c.id, value: c.value } }, '')));
+}
+function stageFormats(ev) {
+    const t = ev.target;
+    if (t.id === 'qpFormatFilter') return;
+    if (t.hasAttribute('data-group') || t.hasAttribute('data-group-format')) { stage('preset:formats:groups', prepareGroups); return; }
+    const kind = t.hasAttribute('data-score') ? 'scores' : t.hasAttribute('data-enabled') ? 'enabled' : t.hasAttribute('data-follow-fmt') ? 'follow' : '';
+    if (!kind) return;
+    t.dataset.dirty = '1';
+    stage('preset:formats:' + kind, { scores: prepareScores, enabled: prepareEnabled, follow: prepareFollow }[kind]);
+}
+$('qpFormats').addEventListener('change', stageFormats);
+$('qpFormats').addEventListener('input', stageFormats);
 $('qpFormats').addEventListener('click', async ev => {
     const t = ev.target;
-    if (t.id === 'qpGroupsSave') {
-        // Collect every changed group first: each save re-renders the list.
-        const changes = [];
-        for (const cb of $('qpFormats').querySelectorAll('[data-group]')) {
-            const id = cb.getAttribute('data-group');
-            const formats = {};
-            $('qpFormats').querySelectorAll(`[data-group-format="${CSS.escape(id)}"]`).forEach(f => { if (!f.disabled) formats[f.getAttribute('data-key')] = f.checked; });
-            const g = state.current.resolved.groups.find(x => x.trashId === id);
-            if (cb.checked !== g.enabled || g.formats.some(f => !f.required && formats[f.trashId] !== f.selected)) {
-                changes.push({ id, value: { enabled: cb.checked, formats } });
-            }
-        }
-        for (const c of changes) await override('group:' + c.id, c.value, 'Groups saved');
-    }
+    if (t.id === 'qpGroupsSave') { await busy(t, () => saveSection('preset:formats:groups', prepareGroups)); return; }
+    if ((t.hasAttribute('data-edit') || t.hasAttribute('data-reset-score') || t.hasAttribute('data-remove') || t.id === 'qpAddFormat') && blockedByStaged('preset:formats')) return;
     const edit = t.getAttribute('data-edit');
     if (edit) {
         const cf = findFormat(edit);
@@ -1186,13 +1340,27 @@ $('qpModal').addEventListener('keydown', ev => { if (ev.key === 'Escape') { ev.p
 $('qpModalOk').addEventListener('click', ev => busy(ev.currentTarget, async () => { if (!modalHandler) return; const ok = await modalHandler($('qpModalBody').value); if (ok !== false) closeModal(); }));
 
 if ($('qpEnabled')) {
-    $('qpEnabled').addEventListener('change', async e => {
+    $('qpEnabled').addEventListener('change', e => {
         const on = e.target.checked;
-        const ok = await run(() => api('/selection', { method: 'PUT', body: { enabled: on } }), on ? 'Quality presets switched on' : 'Quality presets switched off');
-        if (ok === undefined) { e.target.checked = !on; return; }
         renderMaster(on);
+        // Switching back to the saved state leaves nothing to save.
+        if (state.list && on === !state.list.disabled) { unstage('master'); return; }
+        stage('master', () => { const enabled = $('qpEnabled').checked; return () => run(() => api('/selection', { method: 'PUT', body: { enabled } })); });
     });
 }
+
+$('qpSaveAll').addEventListener('click', ev => busy(ev.currentTarget, () => savePending([...pending.keys()])));
+$('qpDiscard').addEventListener('click', () => {
+    pending.clear();
+    updateSaveBar();
+    loadList();
+    if (state.current) renderDetail();
+});
+window.addEventListener('beforeunload', ev => {
+    if (!pending.size) return;
+    ev.preventDefault();
+    ev.returnValue = '';
+});
 
 // ---------- init ----------
 (async function init() {
