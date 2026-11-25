@@ -447,6 +447,14 @@ func ResultsWithDetails(results []models.NZBResult, opts Options) []FilteredResu
 			if mappedRelease {
 				releaseTitles = append(append([]string(nil), candidateTitles...), mapped.ReleaseTitle)
 			}
+			// ptt-go reads a year that ends the title ("Paris 2024", "2012") as
+			// the release year. Put it back when the title with it is one of the
+			// expected titles.
+			if title, ok := titleWithParsedYear(parsed, releaseTitles); ok {
+				parsedCopy := *parsed
+				parsedCopy.Title = title
+				parsed = &parsedCopy
+			}
 			// Check title similarity
 			titleSim, matchedTitle := bestTitleSimilarityForMedia(releaseTitles, parsed.Title, opts.IsMovie, result.Title)
 			if i < 5 {
@@ -564,6 +572,13 @@ func ResultsWithDetails(results []models.NZBResult, opts Options) []FilteredResu
 			// Filter by media type using season/episode/volume detection
 			// TV shows have seasons/episodes/volumes or are marked as complete packs, movies don't
 			// Volumes are common in anime DVD/BD releases (e.g., "Vol 01", "Vol.1-6")
+			// ptt-go reads a number-only movie title ("1917", "300") as an
+			// episode number. That number is the title, not a TV pattern.
+			if opts.IsMovie && episodesAreTitleNumbers(parsed, matchedTitle) {
+				parsedCopy := *parsed
+				parsedCopy.Episodes = nil
+				parsed = &parsedCopy
+			}
 			hasTVPattern := len(parsed.Seasons) > 0 || len(parsed.Episodes) > 0 || len(parsed.Volumes) > 0
 			hasEpisodeResolver := opts.EpisodeResolver != nil
 
@@ -638,7 +653,7 @@ func ResultsWithDetails(results []models.NZBResult, opts Options) []FilteredResu
 
 			// Check year for all media types (movies and series)
 			if opts.ExpectedYear > 0 {
-				parsedYear := releaseYearOutsideTitle(result.Title, parsed.Year, titleYears(append([]string{opts.ExpectedTitle, matchedTitle}, opts.AlternateTitles...)))
+				parsedYear := releaseYearOutsideTitle(result.Title, parsed.Year, titleYears(append([]string{opts.ExpectedTitle, matchedTitle}, opts.AlternateTitles...), opts.ExpectedYear))
 				if parsedYear == 0 {
 					parsedYear = matchingYearFromRange(result.Title, opts.ExpectedYear)
 				}
@@ -908,13 +923,59 @@ func hasDolbyVision(hdrFormats []string) bool {
 	return false
 }
 
+// titleWithParsedYear returns the parsed title with the parsed year after it
+// when that, and not the parsed title alone, is one of the expected titles
+// ("Doctor Who" stays as parsed even with an alias "Doctor Who (2005)").
+func titleWithParsedYear(parsed *parsett.ParsedTitle, titles []string) (string, bool) {
+	if parsed.Year == 0 {
+		return "", false
+	}
+	withYear := strings.TrimSpace(parsed.Title + " " + strconv.Itoa(parsed.Year))
+	normalized, alone := normalizeForContainment(withYear), normalizeForContainment(parsed.Title)
+	found := false
+	for _, title := range titles {
+		switch normalizeForContainment(title) {
+		case alone:
+			return "", false
+		case normalized:
+			found = true
+		}
+	}
+	return withYear, found
+}
+
+// episodesAreTitleNumbers reports whether every parsed episode number is a word
+// of both the parsed and the expected title, with no season or volume parsed.
+func episodesAreTitleNumbers(parsed *parsett.ParsedTitle, expectedTitle string) bool {
+	if len(parsed.Episodes) == 0 || len(parsed.Seasons) > 0 || len(parsed.Volumes) > 0 {
+		return false
+	}
+	words := func(title string) map[string]bool {
+		set := map[string]bool{}
+		for _, word := range strings.Fields(normalizeForContainment(title)) {
+			set[word] = true
+		}
+		return set
+	}
+	inParsed, inExpected := words(parsed.Title), words(expectedTitle)
+	for _, episode := range parsed.Episodes {
+		number := strconv.Itoa(episode)
+		if !inParsed[number] || !inExpected[number] {
+			return false
+		}
+	}
+	return true
+}
+
 // titleYears returns the year-like numbers that are part of the titles
-// themselves ("Blade Runner 2099", "1923", "2001: A Space Odyssey").
-func titleYears(titles []string) map[int]bool {
+// themselves ("Blade Runner 2099", "1923", "2001: A Space Odyssey"). A year
+// that also fits the expected year ("Doctor Who (2005)") is left out: in a
+// release name it still marks the release year.
+func titleYears(titles []string, expectedYear int) map[int]bool {
 	years := map[int]bool{}
 	for _, title := range titles {
 		for _, token := range yearWordPattern.FindAllString(title, -1) {
-			if year, err := strconv.Atoi(token); err == nil {
+			if year, err := strconv.Atoi(token); err == nil && abs(year-expectedYear) > MaxYearDifference {
 				years[year] = true
 			}
 		}
@@ -930,9 +991,20 @@ func releaseYearOutsideTitle(releaseTitle string, parsedYear int, inTitle map[in
 	if parsedYear == 0 || !inTitle[parsedYear] {
 		return parsedYear
 	}
+	seen := 0
 	for _, token := range yearWordPattern.FindAllString(releaseTitle, -1) {
-		if year, err := strconv.Atoi(token); err == nil && !inTitle[year] {
+		year, err := strconv.Atoi(token)
+		if err != nil {
+			continue
+		}
+		if !inTitle[year] {
 			return year
+		}
+		// A title year named twice ("1984.1984") is also the release year.
+		if year == parsedYear {
+			if seen++; seen == 2 {
+				return year
+			}
 		}
 	}
 	return 0
