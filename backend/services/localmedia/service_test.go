@@ -220,6 +220,21 @@ func (f *fakeLocalMediaRepo) ListAllItemsByLibrary(ctx context.Context, libraryI
 	return items, nil
 }
 
+// ListItemsForTitle returns every item of the library: the service filters.
+func (f *fakeLocalMediaRepo) ListItemsForTitle(ctx context.Context, libraryID, _, _, _, _ string, season, episode int) ([]models.LocalMediaItem, error) {
+	items, err := f.ListAllItemsByLibrary(ctx, libraryID)
+	if err != nil || episode <= 0 {
+		return items, err
+	}
+	var out []models.LocalMediaItem
+	for _, item := range items {
+		if item.SeasonNumber == season && item.EpisodeNumber == episode {
+			out = append(out, item)
+		}
+	}
+	return out, nil
+}
+
 func (f *fakeLocalMediaRepo) UpsertItem(ctx context.Context, item *models.LocalMediaItem) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

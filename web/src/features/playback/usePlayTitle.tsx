@@ -12,6 +12,7 @@ import {
   type LibraryVersion,
   type ResumeState,
 } from '@/api/details';
+import { copiesFor, getQualityPresets, libraryCopyRule } from '@/api/qualityPresets';
 import type { Title } from '@/api/titles';
 import { useActiveProfile } from '@/auth/hooks';
 import { sessionStore } from '@/auth/sessionStore';
@@ -24,6 +25,7 @@ import {
   type StartPoint,
 } from '@/lib/playback';
 import { VersionsDialog } from '@/features/details/VersionsDialog';
+import { pickedPresetFor } from '@/features/details/useWarmPrequeue';
 import { PlaybackOverlay, type PlaybackOverlayState } from './PlaybackOverlay';
 import { resolvePlayback, type PlayEpisode, type PlayRequest } from './resolve';
 
@@ -202,7 +204,27 @@ export function usePlayTitle() {
         const versions = await libraryMatches(profileId, target, signal)
           .then(toLibraryVersions)
           .catch(() => null);
-        const copies = !versions
+        // A library copy plays unless another preset is picked for the title (the server
+        // decides the same for the other apps).
+        const rule = !versions
+          ? 'none'
+          : libraryCopyRule(
+              await getQualityPresets(
+                profileId,
+                req.episode
+                  ? {
+                      ...base,
+                      season: req.episode.seasonNumber,
+                      episode: req.episode.episodeNumber,
+                      absolute: req.episode.absoluteEpisodeNumber,
+                    }
+                  : base,
+                signal,
+              ).catch(() => null),
+              base.mediaType,
+              pickedPresetFor(profileId, base.titleId),
+            );
+        const allCopies = !versions
           ? []
           : req.episode
             ? (versions.episodes[episodeKey(req.episode.seasonNumber, req.episode.episodeNumber)] ??
@@ -210,6 +232,7 @@ export function usePlayTitle() {
             : base.mediaType === 'movie'
               ? versions.movie
               : [];
+        const copies = copiesFor(allCopies, rule);
         const search = detailsSearch(
           { ...req.title, id: req.title.titleId },
           req.episode
@@ -247,7 +270,7 @@ export function usePlayTitle() {
           }}
           onStreamInstead={() => {
             setChoice(null);
-            void play(choice.req);
+            void play({ ...choice.req, noLibraryCopy: true });
           }}
         />
       )}

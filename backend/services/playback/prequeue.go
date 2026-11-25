@@ -83,6 +83,9 @@ type PrequeueRequest struct {
 	// QualityPreset ranks this prequeue's search with a quality preset (an ID
 	// or "simple") instead of the profile's, when the server allows it.
 	QualityPreset string `json:"qualityPreset,omitempty"`
+	// NoLibraryCopy streams even when a local library has the title (the
+	// user chose "Stream instead"); nothing is remembered.
+	NoLibraryCopy bool `json:"noLibraryCopy,omitempty"`
 }
 
 // PrequeueResponse is returned when a prequeue request is initiated
@@ -750,6 +753,11 @@ func (s *PrequeueStore) Create(titleID, titleName, userID, mediaType string, yea
 // ErrPrequeueInProgress is returned by CreateScopedUnlessInProgress when an
 // entry for the same title, user and settings scope is still being resolved.
 var ErrPrequeueInProgress = errors.New("prequeue already in progress")
+
+// ErrPrequeueLibraryCopy: a scheduled pre-warm was skipped because a local
+// library has the title (playing it opens the file; there is nothing to
+// search for).
+var ErrPrequeueLibraryCopy = errors.New("a local library has it")
 
 // IsPrequeueInProgress reports whether status is a non-terminal resolve state.
 func IsPrequeueInProgress(status PrequeueStatus) bool {

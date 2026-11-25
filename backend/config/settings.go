@@ -2143,6 +2143,11 @@ type NetworkSettings struct {
 // instead of a quality preset.
 const QualityPresetSimple = "simple"
 
+// QualityPresetLocal plays the profile's copy of a title from a local library
+// instead of searching: the "Library copy" choice, offered (and the default)
+// only for titles a local library has.
+const QualityPresetLocal = "local"
+
 // QualityPresetSource is a TRaSH-format snapshot source.
 type QualityPresetSource struct {
 	ID       string `json:"id"`
@@ -2184,6 +2189,10 @@ type QualityPresetsSettings struct {
 	// HiddenByDefault are offered presets that profiles' version pickers
 	// leave out unless a profile shows them itself.
 	HiddenByDefault []string `json:"hiddenByDefault,omitempty"`
+	// IgnoreLibraryCopies: playing a catalog title always searches. By
+	// default a title one of the profile's local libraries has plays from
+	// there (QualityPresetLocal), unless another preset is picked for it.
+	IgnoreLibraryCopies bool `json:"ignoreLibraryCopies,omitempty"`
 	// Sources are the TRaSH-format snapshot sources, merged by priority
 	// (lower first). Empty means TRaSH-Guides on GitHub.
 	Sources []QualityPresetSource `json:"sources,omitempty"`

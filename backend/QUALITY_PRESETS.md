@@ -223,6 +223,19 @@ profile: it is not in its pickers, cannot be its default, and a preset
 remembered for a title is skipped while hidden. The admin sees how many
 own choices a profile made next to its list.
 
+### Library copies
+
+A movie or episode one of the profile's local libraries has plays from there,
+in every app: the mediastorm apps, the web client and Jellyfin clients through
+the bridge (Continue watching and Next up too), since the server decides when
+a playback starts. Version pickers offer *Library copy* first for such a title,
+and Auto uses it. Picking another preset for the title streams it instead, then
+and later (the pick is remembered for the title on that device, even when it is
+the default preset); picking *Library copy* again plays the file and forgets the
+pick. *Prefer library copies* under Active presets switches this off: playing a
+title always searches. Plex and Jellyfin libraries do not count; their items play
+through their server as before.
+
 ## Importing
 
 - **TRaSH-Guides**: pick a profile and a score set (TRaSH's `trash_scores`

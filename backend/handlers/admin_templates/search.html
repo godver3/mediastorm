@@ -414,7 +414,7 @@
         if (seq !== animeDecisionSeq) return;
         if (!r || r.error || r.anime === undefined) { el.textContent = ''; return; }
         const sel = mediaType === 'movie' ? r.movie : r.series;
-        el.textContent = `Anime: ${r.anime ? 'yes' : 'no'} (${r.animeReason || 'unknown'}) · preset used: ${sel && sel.presetId ? sel.name : 'simple ranking'} (${sel ? sel.source : 'none'})`;
+        el.textContent = `Anime: ${r.anime ? 'yes' : 'no'} (${r.animeReason || 'unknown'}) · preset used: ${sel && sel.presetId === 'local' ? 'library copy when played; searches rank with the default' : sel && sel.presetId ? sel.name : 'simple ranking'} (${sel ? sel.source : 'none'})`;
     }
 
     async function loadQualityPresets() {

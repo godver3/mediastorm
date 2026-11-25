@@ -248,6 +248,35 @@ func (r *pgLocalMediaRepo) ListAllItemsByLibrary(ctx context.Context, libraryID 
 	return items, rows.Err()
 }
 
+func (r *pgLocalMediaRepo) ListItemsForTitle(ctx context.Context, libraryID, titleID, imdbID, tmdbID, tvdbID string, season, episode int) ([]models.LocalMediaItem, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, library_id, relative_path, file_path, file_name, library_type, detected_title,
+		       detected_year, season_number, episode_number, confidence, match_status,
+		       matched_title_id, matched_media_type, matched_name, matched_year, is_missing, missing_since,
+		       metadata, probe, size_bytes, modified_at, last_scanned_at, last_seen_scan_id, created_at, updated_at
+		FROM local_media_items
+		WHERE library_id = $1 AND NOT is_missing AND match_status <> 'unmatched'
+		  AND ($7 <= 0 OR (season_number = $6 AND episode_number = $7))
+		  AND (($2 <> '' AND (lower(matched_title_id) = lower($2) OR lower(metadata->>'id') = lower($2)))
+		    OR ($3 <> '' AND lower(metadata->>'imdbId') = lower($3))
+		    OR ($4 <> '' AND metadata->>'tmdbId' = $4)
+		    OR ($5 <> '' AND metadata->>'tvdbId' = $5))`,
+		libraryID, strings.TrimSpace(titleID), strings.TrimSpace(imdbID), strings.TrimSpace(tmdbID), strings.TrimSpace(tvdbID), season, episode)
+	if err != nil {
+		return nil, fmt.Errorf("list local media items for title: %w", err)
+	}
+	defer rows.Close()
+	var items []models.LocalMediaItem
+	for rows.Next() {
+		item, err := scanLocalMediaItem(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, *item)
+	}
+	return items, rows.Err()
+}
+
 func normalizeLocalMediaSort(sortBy string) string {
 	switch strings.TrimSpace(sortBy) {
 	case "name":

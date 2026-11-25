@@ -365,6 +365,10 @@ type LocalMediaRepository interface {
 	DeleteLibrary(ctx context.Context, id string) error
 	ListItemsByLibrary(ctx context.Context, libraryID string, query models.LocalMediaItemListQuery) (*models.LocalMediaItemListResult, error)
 	ListAllItemsByLibrary(ctx context.Context, libraryID string) ([]models.LocalMediaItem, error)
+	// ListItemsForTitle lists a library's present, matched items whose title ID
+	// or metadata IDs equal the given ones (empty ones are left out), of one
+	// episode when episode > 0: the candidates of a title's library copy.
+	ListItemsForTitle(ctx context.Context, libraryID, titleID, imdbID, tmdbID, tvdbID string, season, episode int) ([]models.LocalMediaItem, error)
 	UpsertItem(ctx context.Context, item *models.LocalMediaItem) error
 	GetItem(ctx context.Context, id string) (*models.LocalMediaItem, error)
 	DeleteItemsNotSeenInScan(ctx context.Context, libraryID, scanID string) error

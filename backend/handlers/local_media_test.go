@@ -145,6 +145,10 @@ type fakeLocalMediaPlaybackService struct {
 	matches   []models.LocalMediaMatchedGroup
 	lastQuery models.LocalMediaItemListQuery
 	err       error
+	// Library copies (FindLibraryCopies) and what was asked last.
+	copies                                            []localmedia.LibraryCopy
+	lastCopyQuery                                     models.LocalMediaMatchQuery
+	lastCopySeason, lastCopyEpisode, lastCopyAbsolute int
 }
 
 func (f *fakeLocalMediaPlaybackService) GetItem(ctx context.Context, itemID string) (*models.LocalMediaItem, error) {
@@ -172,6 +176,11 @@ func (f *fakeLocalMediaPlaybackService) ListGroups(ctx context.Context, libraryI
 
 func (f *fakeLocalMediaPlaybackService) FindMatches(ctx context.Context, query models.LocalMediaMatchQuery) ([]models.LocalMediaMatchedGroup, error) {
 	return f.matches, f.err
+}
+
+func (f *fakeLocalMediaPlaybackService) FindLibraryCopies(ctx context.Context, query models.LocalMediaMatchQuery, season, episode, absolute int) ([]localmedia.LibraryCopy, error) {
+	f.lastCopyQuery, f.lastCopySeason, f.lastCopyEpisode, f.lastCopyAbsolute = query, season, episode, absolute
+	return f.copies, f.err
 }
 
 type fakeLocalMediaUsersProvider struct {

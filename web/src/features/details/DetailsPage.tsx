@@ -1,14 +1,22 @@
 import { useDocumentTitle } from '@/lib/documentTitle';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useRouter } from '@tanstack/react-router';
 import { useMemo, useState, type MouseEvent, type ReactNode } from 'react';
 import { episodeKey, primaryTrailer, type Episode, type LibraryVersion } from '@/api/details';
-import { releaseTitle, type SourceResult, type TrackOverrides } from '@/api/playback';
+import {
+  releaseTitle,
+  startPrequeue,
+  type SourceResult,
+  type TrackOverrides,
+} from '@/api/playback';
 import {
   currentPreset,
   defaultPreset,
   getQualityPresets,
   offeredFor,
+  copiesFor,
+  libraryCopyRule,
+  LIBRARY_PRESET,
   presetIdOf,
   qualityPresetKeys,
 } from '@/api/qualityPresets';
@@ -22,6 +30,7 @@ import {
   episodeCode,
   usePlayTitle,
 } from '@/features/playback/usePlayTitle';
+import { prequeueBody } from '@/features/playback/resolve';
 import { cn } from '@/lib/cn';
 import { detailsLink, type DetailsSearch } from '@/lib/links';
 import type { StartPoint } from '@/lib/playback';
@@ -144,14 +153,42 @@ export function DetailsPage({ search }: { search: DetailsSearch }) {
           ? d.library.data.movie
           : [];
 
-  // Quality presets offered for the title (servers with presets); none hides the picker.
+  // Quality presets offered for the title (servers with presets); none hides the picker. For a
+  // series, asked for the episode Play targets ("Library copy" is offered per episode).
+  const presetEpisode =
+    !isMovie && primaryEpisode
+      ? {
+          season: primaryEpisode.seasonNumber,
+          episode: primaryEpisode.episodeNumber,
+          absolute: primaryEpisode.absoluteEpisodeNumber,
+        }
+      : undefined;
   const presets = useQuery({
-    queryKey: qualityPresetKeys.title(profileId ?? '', info.titleId, info.mediaType),
-    queryFn: ({ signal }) => getQualityPresets(profileId!, info, signal),
-    enabled: !!profileId && !!info.titleId,
+    queryKey: qualityPresetKeys.title(
+      profileId ?? '',
+      info.titleId,
+      info.mediaType,
+      presetEpisode ? `${presetEpisode.season}:${presetEpisode.episode}` : undefined,
+    ),
+    queryFn: ({ signal }) => getQualityPresets(profileId!, { ...info, ...presetEpisode }, signal),
+    // Asked with the IDs the details add (as playback sends them); a series also waits for
+    // the episode Play targets.
+    enabled: !!profileId && !!info.titleId && !!bundle,
     staleTime: 5 * 60_000,
   });
   const presetChoices = presets.data ?? null;
+  // Whether library copies play is decided for the title (any of its episodes in a library, a
+  // preset remembered for it), as the server does: the episode list plays other episodes too.
+  const titlePresetsQuery = {
+    queryKey: qualityPresetKeys.title(profileId ?? '', info.titleId, info.mediaType),
+    queryFn: ({ signal }: { signal: AbortSignal }) => getQualityPresets(profileId!, info, signal),
+    staleTime: 5 * 60_000,
+  };
+  const titlePresets = useQuery({
+    ...titlePresetsQuery,
+    enabled: !!profileId && !!info.titleId && !!bundle,
+  });
+  const queryClient = useQueryClient();
   const offeredPresets = presetChoices ? offeredFor(presetChoices, info.mediaType) : [];
   const pickedPresetId =
     pickedPreset?.titleId === info.titleId
@@ -166,7 +203,11 @@ export function DetailsPage({ search }: { search: DetailsSearch }) {
     offeredPresets.find((p) => p.id === activePresetId)?.name ??
     (presetChoices ? currentPreset(presetChoices, info.mediaType).name : undefined);
 
-  const primaryVersions = versionsFor(isMovie ? undefined : primaryEpisode);
+  // Play takes a library copy unless another preset is picked for the title (as the server
+  // decides for the other apps); while the choices load, the library copy.
+  const libraryRule = libraryCopyRule(titlePresets.data ?? null, info.mediaType, pickedPresetId);
+  const playableCopies = (ep?: Episode) => copiesFor(versionsFor(ep), libraryRule);
+  const primaryVersions = playableCopies(isMovie ? undefined : primaryEpisode);
   const { warm: warmState, settings: playSettings } = useWarmPrequeue(profileId, info, {
     ready: !!bundle && !d.library.isPending,
     hasLibraryCopy: primaryVersions.length > 0,
@@ -194,6 +235,8 @@ export function DetailsPage({ search }: { search: DetailsSearch }) {
     start?: StartPoint;
     library?: LibraryVersion;
     source?: SourceResult;
+    /** "Stream instead": not the library copy, also not from the server. */
+    stream?: boolean;
   }) =>
     void play({
       title: info,
@@ -201,6 +244,7 @@ export function DetailsPage({ search }: { search: DetailsSearch }) {
       start: opts.start,
       library: opts.library,
       source: opts.source,
+      noLibraryCopy: opts.stream,
       ...(opts.library || opts.source
         ? {}
         : {
@@ -218,14 +262,21 @@ export function DetailsPage({ search }: { search: DetailsSearch }) {
   };
 
   /** Play, preferring the library: one copy plays, several ask (native playPreferringLibrary). */
-  const playPreferringLibrary = (episode: Episode | undefined, from: StartPoint) => {
-    const copies = versionsFor(episode);
-    if (copies.length > 1) {
-      setVersionsState({ versions: copies, episode, start: from, fromPlay: true });
-      return;
-    }
-    start({ episode, start: from, library: copies[0] });
-  };
+  const playPreferringLibrary = (episode: Episode | undefined, from: StartPoint) =>
+    void (async () => {
+      let rule = libraryRule;
+      // The title's rule still loading: wait for it rather than play a copy the server would not.
+      if (versionsFor(episode).length > 0 && titlePresets.isPending && profileId) {
+        const c = await queryClient.fetchQuery(titlePresetsQuery).catch(() => null);
+        rule = libraryCopyRule(c, info.mediaType, pickedPresetId);
+      }
+      const copies = copiesFor(versionsFor(episode), rule);
+      if (copies.length > 1) {
+        setVersionsState({ versions: copies, episode, start: from, fromPlay: true });
+        return;
+      }
+      start({ episode, start: from, library: copies[0] });
+    })();
 
   const onEpisodePlay = (ep: Episode) => playPreferringLibrary(ep, resumeStart(ep.resume));
 
@@ -596,7 +647,7 @@ export function DetailsPage({ search }: { search: DetailsSearch }) {
               ? () => {
                   const s = versionsState;
                   setVersionsState(null);
-                  start({ episode: s.episode, start: s.start });
+                  start({ episode: s.episode, start: s.start, stream: true });
                 }
               : undefined
           }
@@ -641,6 +692,15 @@ export function DetailsPage({ search }: { search: DetailsSearch }) {
             setQualityOpen(false);
             if (id === activePresetId) return;
             setPagePreset({ titleId: info.titleId, id });
+            // Picking the library copy tells the server, which forgets a preset remembered for
+            // the title (the copy itself plays from here without asking it).
+            if (id === LIBRARY_PRESET && profileId) {
+              const episode = !isMovie && primaryEpisode ? playEpisode(primaryEpisode) : undefined;
+              void startPrequeue(profileId, {
+                ...prequeueBody({ title: info, episode }),
+                qualityPreset: LIBRARY_PRESET,
+              }).catch(() => undefined);
+            }
             // The server remembers the pick once a prequeue or playback sends it; until then,
             // and while it may still rank Auto with the old preset, this page sends the pick
             // itself. A warm-up ranked with the old preset must not be reused.

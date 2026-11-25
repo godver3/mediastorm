@@ -112,7 +112,9 @@ func (s *Service) SelectQualityPreset(opts SearchOptions, settings config.Settin
 	if settings.QualityPresets.Disabled {
 		return QualityPresetSelection{Source: "disabled"}
 	}
-	if req := strings.TrimSpace(opts.QualityPreset); settings.QualityPresets.AllowsRequestPreset(req) && s.profileAllowsPreset(opts.UserID, req, settings) {
+	// "Library copy" is not a ranking: a search for such a title ranks as
+	// without a request.
+	if req := strings.TrimSpace(opts.QualityPreset); !strings.EqualFold(req, config.QualityPresetLocal) && settings.QualityPresets.AllowsRequestPreset(req) && s.profileAllowsPreset(opts.UserID, req, settings) {
 		return QualityPresetSelection{PresetID: normalizePresetID(req), Source: "request"}
 	}
 	if sel, ok := s.titlePreset(opts, settings); ok {
@@ -143,8 +145,8 @@ var (
 // would not be used, instead of silently ranking with another one.
 func (s *Service) CheckRequestedPreset(ctx context.Context, opts SearchOptions) error {
 	req := strings.TrimSpace(opts.QualityPreset)
-	if req == "" {
-		return nil
+	if req == "" || strings.EqualFold(req, config.QualityPresetLocal) {
+		return nil // the library copy: the search ranks as without a request
 	}
 	settings, err := s.cfg.Load()
 	if err != nil {

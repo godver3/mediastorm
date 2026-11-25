@@ -3048,9 +3048,10 @@
         const isMovie = selectedItem.mediaType === 'movie';
         const current = isMovie ? c.movie : c.series;
         // The admin chooses which presets are offered here ("simple" fits both media types).
-        const presets = (c.offered || []).filter((p) => !p.mediaType || p.mediaType === (isMovie ? 'movie' : 'series'));
+        // "Library copy" is no ranking for a release list: it is not offered here.
+        const presets = (c.offered || []).filter((p) => p.id !== 'local' && (!p.mediaType || p.mediaType === (isMovie ? 'movie' : 'series')));
         if (!presets.length) return '';
-        const defaultLabel = current && current.presetId ? current.name : 'Simple ranking';
+        const defaultLabel = current && current.presetId === 'local' ? 'default ranking' : current && current.presetId ? current.name : 'Simple ranking';
         const option = (value, label) => `<option value="${escapeHtml(value)}"${manualPreset === value ? ' selected' : ''}>${escapeHtml(label)}</option>`;
         return `<label class="media-meta" style="display:flex; gap:0.5rem; align-items:center; margin-bottom:0.75rem;">Quality preset
             <select id="${id}" class="form-input" style="width:auto;" onchange="changeManualPreset(this.value, this.id)">

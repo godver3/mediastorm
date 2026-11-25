@@ -2222,7 +2222,7 @@ var (
 
 const (
 	maxDetectedSeasonNumber  = 99
-	maxDetectedEpisodeNumber = 999
+	maxDetectedEpisodeNumber = 9999 // long-running anime are numbered absolutely (One Piece - 1071)
 )
 
 func detectTitle(libraryType models.LocalMediaLibraryType, fileName string, parsed *parsett.ParsedTitle) detectedTitle {
@@ -2504,4 +2504,376 @@ func maxInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// LibraryCopy is a file a local library has of a catalog title.
+type LibraryCopy struct {
+	Item        models.LocalMediaItem
+	LibraryID   string
+	LibraryName string
+}
+
+// FindLibraryCopies lists the files local libraries have of a catalog title,
+// of one episode when season and episode are set (missing files left out),
+// matched like FindMatches but without its episode metadata: playback asks.
+// With external IDs only that title's rows are read; a lookup by name alone
+// reads the library.
+//
+// Only what a file's name or folder spells out is trusted, since the file
+// plays without asking. A special (a Specials or Season 0 folder, "OVA",
+// "Recap", "NCED", "05.5") never stands in for an episode, and a special asked
+// for is only a file named S00Exx. In a season folder of absolutely numbered
+// files (Sonarr anime: "Season 02/Show - 013"), the numbers are absolute.
+//
+// An episode the libraries have under no file of its own season and number is
+// looked for once more among the series' files: in a file holding a short run
+// of episodes ("S01E07E08", "- 07-08") that starts with its own episode, and,
+// when absolute > 0, under its absolute number in a file named by it alone
+// ("One Piece - 1071"), unless the library has the asked season itself. When
+// files of different folders or names would qualify (a sequel named without
+// a season, season folders the scan did not recognise), none is taken.
+func (s *Service) FindLibraryCopies(ctx context.Context, query models.LocalMediaMatchQuery, season, episode, absolute int) ([]LibraryCopy, error) {
+	show := episode > 0 && normalizeLookupLibraryType(query.MediaType) == models.LocalMediaLibraryTypeShow
+	if !show {
+		return s.titleFiles(ctx, query, 0, 0)
+	}
+	exact, err := s.titleFiles(ctx, query, season, episode)
+	if err != nil {
+		return nil, err
+	}
+	exact = filterCopies(exact, func(c LibraryCopy, _ []LibraryCopy) bool {
+		item := c.Item
+		if item.SeasonNumber != season || item.EpisodeNumber != episode {
+			return false
+		}
+		named := seasonEpisodeToken.MatchString(item.FileName)
+		if season == 0 {
+			return named
+		}
+		return named || !librarySpecial(item)
+	})
+	var candidates []LibraryCopy
+	loaded := false
+	if len(exact) > 0 {
+		// A file whose season only its folder gives may be numbered
+		// absolutely: that needs the title's other files to tell.
+		check := false
+		for _, c := range exact {
+			check = check || (season > 1 && !namesSeason(c.Item.FileName))
+		}
+		if !check {
+			return exact, nil
+		}
+		if candidates, err = s.titleFiles(ctx, query, 0, 0); err != nil {
+			return nil, err
+		}
+		loaded = true
+		layout := newTitleLayout(candidates)
+		exact = filterCopies(exact, func(c LibraryCopy, _ []LibraryCopy) bool {
+			return layout.kind(c, seasonStart(season, episode, absolute)) == seasonNumbered
+		})
+		if len(exact) > 0 {
+			return exact, nil
+		}
+	}
+	if !loaded {
+		if candidates, err = s.titleFiles(ctx, query, 0, 0); err != nil {
+			return nil, err
+		}
+	}
+	layout := newTitleLayout(candidates)
+	start := seasonStart(season, episode, absolute)
+	kindOf := func(c LibraryCopy) folderKind {
+		if c.Item.SeasonNumber == season {
+			return layout.kind(c, start)
+		}
+		return layout.kind(c, 0)
+	}
+	found := filterCopies(candidates, func(c LibraryCopy, library []LibraryCopy) bool {
+		item := c.Item
+		named := seasonEpisodeToken.MatchString(item.FileName)
+		if (!named && librarySpecial(item)) || season == 0 {
+			return false
+		}
+		kind := kindOf(c)
+		if item.SeasonNumber == season && kind == seasonNumbered && fileHoldsEpisode(item, episode) {
+			return true
+		}
+		if absolute <= 0 || namesSeason(item.FileName) {
+			return false
+		}
+		if item.SeasonNumber > 1 && kind != absoluteNumbered {
+			return false
+		}
+		if item.EpisodeNumber != absolute && !fileHoldsEpisode(item, absolute) {
+			return false
+		}
+		if season > 1 {
+			for _, other := range library {
+				if other.Item.SeasonNumber == season && kindOf(other) != absoluteNumbered {
+					return false // the library has the season itself: numbered by season
+				}
+			}
+		}
+		return true
+	})
+	return dropAmbiguous(found), nil
+}
+
+// seasonStart is the absolute number of the asked season's first episode (0:
+// unknown).
+func seasonStart(season, episode, absolute int) int {
+	if season <= 0 || episode <= 0 || absolute < episode {
+		return 0
+	}
+	return absolute - episode + 1
+}
+
+// filterCopies keeps the copies keep accepts; keep also gets the copies of the
+// same library.
+func filterCopies(copies []LibraryCopy, keep func(c LibraryCopy, library []LibraryCopy) bool) []LibraryCopy {
+	byLibrary := map[string][]LibraryCopy{}
+	for _, c := range copies {
+		byLibrary[c.LibraryID] = append(byLibrary[c.LibraryID], c)
+	}
+	var out []LibraryCopy
+	for _, c := range copies {
+		if keep(c, byLibrary[c.LibraryID]) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// dropAmbiguous takes none when the files go by different names ("Show" and
+// "Show II", in any of the libraries), and leaves out a library's files when
+// they come from different folders there (versions of one file share both).
+func dropAmbiguous(copies []LibraryCopy) []LibraryCopy {
+	names := map[string]bool{}
+	folders := map[string]map[string]bool{}
+	for _, c := range copies {
+		names[namePrefix(c.Item)] = true
+		if folders[c.LibraryID] == nil {
+			folders[c.LibraryID] = map[string]bool{}
+		}
+		folders[c.LibraryID][itemFolder(c.Item)] = true
+	}
+	if len(names) > 1 {
+		return nil
+	}
+	var out []LibraryCopy
+	for _, c := range copies {
+		if len(folders[c.LibraryID]) == 1 {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// folderKind is how a season folder's files are numbered.
+type folderKind int
+
+const (
+	seasonNumbered   folderKind = iota // by season ("Season 02/Show - 05" is S02E05)
+	absoluteNumbered                   // absolutely (Sonarr anime: "Season 02/Show - 013")
+	unclearNumbering                   // cannot tell: neither is trusted
+)
+
+// titleLayout tells a title's season folders apart by their files. A season
+// folder ("Season 02") whose files name no season and start above episode 1
+// is numbered absolutely when the library has the previous season and the
+// folder starts after its last episode (at the season's first absolute number,
+// when the request tells it); with no previous season it is unclear (season 1
+// missing or the first episodes deleted look the same). Only regular files
+// count: specials, files without an episode or of another season do not.
+type titleLayout struct {
+	folderMin map[string]int // library|folder → lowest episode
+	seasonMax map[string]int // library|season → highest episode
+}
+
+func newTitleLayout(copies []LibraryCopy) titleLayout {
+	l := titleLayout{folderMin: map[string]int{}, seasonMax: map[string]int{}}
+	for _, c := range copies {
+		item := c.Item
+		if item.EpisodeNumber <= 0 || item.SeasonNumber <= 0 || librarySpecial(item) {
+			continue
+		}
+		season := c.LibraryID + "|" + strconv.Itoa(item.SeasonNumber)
+		if item.EpisodeNumber > l.seasonMax[season] {
+			l.seasonMax[season] = item.EpisodeNumber
+		}
+		if namesSeason(item.FileName) || !folderNamesSeason(item, item.SeasonNumber) {
+			continue
+		}
+		folder := c.LibraryID + "|" + itemFolder(item)
+		if m, ok := l.folderMin[folder]; !ok || item.EpisodeNumber < m {
+			l.folderMin[folder] = item.EpisodeNumber
+		}
+	}
+	return l
+}
+
+// kind tells how the file's season folder is numbered; start is the absolute
+// number of that season's first episode, when known (0 otherwise).
+func (l titleLayout) kind(c LibraryCopy, start int) folderKind {
+	item := c.Item
+	if item.SeasonNumber <= 1 || namesSeason(item.FileName) || !folderNamesSeason(item, item.SeasonNumber) {
+		return seasonNumbered
+	}
+	low, ok := l.folderMin[c.LibraryID+"|"+itemFolder(item)]
+	if !ok || low <= 1 {
+		return seasonNumbered
+	}
+	previous, ok := l.seasonMax[c.LibraryID+"|"+strconv.Itoa(item.SeasonNumber-1)]
+	switch {
+	case !ok:
+		return unclearNumbering
+	case low <= previous:
+		return seasonNumbered
+	case start > 0 && low != start:
+		return unclearNumbering
+	}
+	return absoluteNumbered
+}
+
+// namesSeason reports whether a file's name gives its season ("S01E05",
+// "Show S2 - 05", "2nd Season", "Season 2").
+func namesSeason(fileName string) bool {
+	return seasonEpisodeToken.MatchString(fileName) || seasonNameToken.MatchString(fileName)
+}
+
+var (
+	// seasonEpisodeToken: a name that numbers its episode by season ("S01E05", "1x05").
+	seasonEpisodeToken = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(?:s\d{1,3}[ ._-]?e\d{1,4}|\d{1,2}x\d{1,4})(?:[^0-9]|$)`)
+	// multiEpisodeToken: a run of episodes spelled out, "S01E07E08", "E07-E08", "07-08".
+	multiEpisodeToken = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(?:s(\d{1,3})[ ._-]?)?e?(\d{1,4})((?:(?:-e?|e)\d{1,4})+)(?:[^a-z0-9]|$)`)
+	seasonNameToken   = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(?:s\d{1,2}|season[ ._-]?\d{1,2}|\d{1,2}(?:st|nd|rd|th)[ ._-]season)(?:[^a-z0-9]|$)`)
+	specialNameToken  = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(?:ova|oad|ona|sp\s?\d{1,3}|specials?|extras?|recap|nc ?op|nc ?ed|creditless|preview|trailer)(?:[^a-z0-9]|$)`)
+	halfEpisodeToken  = regexp.MustCompile(`(?:^|[\s_\-\[(])\d{1,4}\.5(?:[\s_\-\])]|\.[a-z0-9]{2,4}$|$)`)
+	specialsFolder    = regexp.MustCompile(`(?i)^(?:specials?|extras?|(?:season|staffel|saison)[\s._-]*0+|s0+)$`)
+	bracketGroups     = regexp.MustCompile(`\[[^\]]*\]|\([^)]*\)`)
+	digitRuns         = regexp.MustCompile(`\d+`)
+	nonAlnum          = regexp.MustCompile(`[^a-z0-9]+`)
+)
+
+// librarySpecial reports whether a file is a special by its folder or name.
+func librarySpecial(item models.LocalMediaItem) bool {
+	return specialsFolder.MatchString(itemFolder(item)) || specialNameToken.MatchString(item.FileName) ||
+		halfEpisodeToken.MatchString(item.FileName)
+}
+
+func itemFolder(item models.LocalMediaItem) string {
+	return strings.TrimSpace(filepath.Base(filepath.Dir(filepath.FromSlash(item.RelativePath))))
+}
+
+// firstEpisodeIndex is where the file's own episode number first appears in
+// its name as a number of its own (-1 when it does not).
+func firstEpisodeIndex(item models.LocalMediaItem) int {
+	for _, run := range digitRuns.FindAllStringIndex(item.FileName, -1) {
+		if n, err := strconv.Atoi(item.FileName[run[0]:run[1]]); err == nil && n == item.EpisodeNumber {
+			return run[0]
+		}
+	}
+	return -1
+}
+
+// namePrefix is a file's name before its episode number, without release
+// groups or tags: "[Group] Show II - 05 (1080p)" → "showii".
+func namePrefix(item models.LocalMediaItem) string {
+	name := item.FileName
+	if i := firstEpisodeIndex(item); i >= 0 {
+		name = name[:i]
+	}
+	return nonAlnum.ReplaceAllString(strings.ToLower(bracketGroups.ReplaceAllString(name, " ")), "")
+}
+
+// fileHoldsEpisode reports whether a file's name spells out a run of at most
+// four episodes that starts with its own episode and includes episode
+// ("Show.S01E07E08", "Show - 07-08"). In a name that numbers by season the run
+// must carry the season ("S01E07-08"); otherwise it must be where the name
+// first gives the file's episode, not a number in the episode's title. A run
+// without a season counts only where the season is not itself a guess from
+// the name: season 0/1, or one its folder names.
+func fileHoldsEpisode(item models.LocalMediaItem, episode int) bool {
+	named := seasonEpisodeToken.MatchString(item.FileName)
+	first := firstEpisodeIndex(item)
+	for _, m := range multiEpisodeToken.FindAllStringSubmatchIndex(item.FileName, -1) {
+		group := func(i int) string {
+			if m[2*i] < 0 {
+				return ""
+			}
+			return item.FileName[m[2*i]:m[2*i+1]]
+		}
+		start, err := strconv.Atoi(group(2))
+		if err != nil || start != item.EpisodeNumber {
+			continue
+		}
+		rest := digitRuns.FindAllString(group(3), -1)
+		last, err := strconv.Atoi(rest[len(rest)-1])
+		if err != nil || last <= start || last-start > 3 || episode <= start || episode > last {
+			continue
+		}
+		if group(1) != "" {
+			if named, err := strconv.Atoi(group(1)); err != nil || named != item.SeasonNumber {
+				continue
+			}
+		} else if named || m[4] != first {
+			continue
+		} else if item.SeasonNumber > 1 && !folderNamesSeason(item, item.SeasonNumber) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// folderNamesSeason reports whether the file's folder is that season's ("Season 05").
+func folderNamesSeason(item models.LocalMediaItem, season int) bool {
+	match := folderSeasonPattern.FindStringSubmatch(itemFolder(item))
+	if match == nil {
+		return false
+	}
+	named, err := strconv.Atoi(match[1])
+	return err == nil && named == season
+}
+
+// titleFiles lists the present files the local libraries have of a title (of
+// one episode when episode > 0, checked by the caller): with external IDs only
+// those rows are read, a lookup by name alone reads the libraries.
+func (s *Service) titleFiles(ctx context.Context, query models.LocalMediaMatchQuery, season, episode int) ([]LibraryCopy, error) {
+	libraries, err := s.repo.ListLibraries(ctx)
+	if err != nil {
+		return nil, err
+	}
+	libraryType := normalizeLookupLibraryType(query.MediaType)
+	var copies []LibraryCopy
+	for _, library := range libraries {
+		if libraryType != "" && library.Type != libraryType {
+			continue
+		}
+		var items []models.LocalMediaItem
+		if query.TitleID != "" || query.IMDBID != "" || query.TMDBID != "" || query.TVDBID != "" {
+			items, err = s.repo.ListItemsForTitle(ctx, library.ID, query.TitleID, query.IMDBID, query.TMDBID, query.TVDBID, season, episode)
+		} else {
+			items, err = s.repo.ListAllItemsByLibrary(ctx, library.ID)
+		}
+		if err != nil {
+			return nil, err
+		}
+		for i := range items {
+			item := items[i]
+			// A low-confidence match (by name alone) is not played by itself.
+			if item.IsMissing || item.MatchStatus == models.LocalMediaMatchStatusLowConfidence {
+				continue
+			}
+			hydrateLocalMediaItemExternalIDs(&item)
+			if localMediaItemMatchesLookup(item, query) {
+				copies = append(copies, LibraryCopy{Item: item, LibraryID: library.ID, LibraryName: library.Name})
+			}
+		}
+	}
+	sort.SliceStable(copies, func(i, j int) bool {
+		return strings.ToLower(copies[i].LibraryName) < strings.ToLower(copies[j].LibraryName)
+	})
+	return copies, nil
 }

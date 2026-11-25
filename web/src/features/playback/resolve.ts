@@ -53,6 +53,8 @@ export interface PlayRequest {
   tracks?: TrackOverrides;
   /** A quality preset picked on the details page for the automatic pick. */
   qualityPreset?: string;
+  /** "Stream instead": the server must not answer with a local library copy. */
+  noLibraryCopy?: boolean;
 }
 
 export interface ResolveProgress {
@@ -92,6 +94,7 @@ export function prequeueBody(req: PlayRequest): PrequeueBody {
   const s = startSeconds(req.start);
   if (s) body.startOffset = s;
   if (req.qualityPreset) body.qualityPreset = req.qualityPreset;
+  if (req.noLibraryCopy) body.noLibraryCopy = true;
   return body;
 }
 

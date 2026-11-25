@@ -54,6 +54,9 @@ type QualityPresetsHandler struct {
 	Select func(mediaType, userID, clientID, titleID string, anime bool) (presetID, source string)
 	// TitleAnime tells whether a title is anime (and why), from metadata.
 	TitleAnime func(ctx context.Context, mediaType, titleID, name string, year int, imdbID string) (bool, string)
+	// LibraryCopy finds a profile's copy of a title in a local library: such
+	// a title is offered "Library copy", which Auto then uses.
+	LibraryCopy LibraryCopyFinder
 }
 
 // clearCaches drops ranked results after anything that changes ranking.
