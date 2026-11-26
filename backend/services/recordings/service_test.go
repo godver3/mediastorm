@@ -306,7 +306,7 @@ func TestRetriedRecordingHasContinuousTimeline(t *testing.T) {
 	stopAt := time.Now().Add(30 * time.Second)
 	for attempt := 1; attempt <= 2; attempt++ {
 		// The file source hits EOF long before stopAt, like a dropped live stream.
-		if result := svc.runRecordingAttempt(context.Background(), recording, stopAt, attempt, recordingStreamChoice{}); result.err != nil || result.stoppedAtSchedule {
+		if result := svc.runRecordingAttempt(context.Background(), recording, stopAt, stopAt, attempt, recordingStreamChoice{}, recordingBackfill{}, nil); result.err != nil || result.stoppedAtSchedule {
 			t.Fatalf("recording attempt %d: %+v", attempt, result)
 		}
 	}
