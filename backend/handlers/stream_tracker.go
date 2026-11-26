@@ -934,7 +934,11 @@ func (t *StreamTracker) ShouldMigratePlayback(userID string, update models.Playb
 		return "", false
 	}
 	terminalSourceFailure := signal.reason == "backend-source-failure" || signal.reason == "backend-provider-unavailable"
-	if !terminalSourceFailure && !update.IsBuffering && (update.BufferAhead == nil || *update.BufferAhead > 5) {
+	// Transient signals (one slow upstream read, a low-throughput window) only
+	// switch a player that is actually stalled. Native players keep a small
+	// forward buffer (~16 MB, 4–8 s at 4K), so a low runway alone is normal and
+	// switching on it turned brief hiccups the buffer absorbed into migrations.
+	if !terminalSourceFailure && !update.IsBuffering {
 		return "", false
 	}
 	if signal.reason == "backend-low-throughput" && update.Position <= 3 {

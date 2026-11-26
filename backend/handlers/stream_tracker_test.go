@@ -92,15 +92,26 @@ func TestUpstreamStarvationWaitsForPlayerBufferPressure(t *testing.T) {
 		t.Fatalf("shrinking runway did not expose preparation signal: prepare=%v reason=%q", prepare, reason)
 	}
 
-	criticalRunway := 4.0
-	reason, migrate := tracker.ShouldMigratePlayback("p1", models.PlaybackProgressUpdate{
+	// A low runway is normal for native players (~16 MB ahead), so it must not
+	// switch a source that is still playing; only a real stall does.
+	lowRunway := 4.0
+	if reason, migrate := tracker.ShouldMigratePlayback("p1", models.PlaybackProgressUpdate{
 		MediaType:   "movie",
 		ItemID:      "tmdb:movie:14160",
 		Position:    41,
-		BufferAhead: &criticalRunway,
+		BufferAhead: &lowRunway,
+	}); migrate {
+		t.Fatalf("low runway without a stall migrated: reason=%q", reason)
+	}
+	reason, migrate := tracker.ShouldMigratePlayback("p1", models.PlaybackProgressUpdate{
+		MediaType:   "movie",
+		ItemID:      "tmdb:movie:14160",
+		Position:    42,
+		BufferAhead: &lowRunway,
+		IsBuffering: true,
 	})
 	if !migrate || reason != "backend-starvation" {
-		t.Fatalf("critical runway did not consume upstream stall: migrate=%v reason=%q", migrate, reason)
+		t.Fatalf("stalled playback did not consume upstream stall: migrate=%v reason=%q", migrate, reason)
 	}
 
 	if _, migrate := tracker.ShouldMigratePlayback("p1", models.PlaybackProgressUpdate{
@@ -139,6 +150,7 @@ func TestWeakerMigrationSignalDoesNotOverwriteConfirmedStarvation(t *testing.T) 
 		ItemID:      "tmdb:movie:14160",
 		Position:    41,
 		BufferAhead: &criticalRunway,
+		IsBuffering: true,
 	})
 	if !migrate || reason != "backend-starvation" {
 		t.Fatalf("weaker signal replaced confirmed starvation: migrate=%v reason=%q", migrate, reason)
@@ -170,6 +182,7 @@ func TestPredictiveMigrationWaitsForBufferPressure(t *testing.T) {
 		ItemID:      "tmdb:movie:14160",
 		Position:    41,
 		BufferAhead: &criticalRunway,
+		IsBuffering: true,
 	})
 	if !migrate || reason != "backend-low-throughput" {
 		t.Fatalf("critical buffer did not receive migration signal: migrate=%v reason=%q", migrate, reason)
