@@ -680,6 +680,11 @@ func buildVideoEncodePlanWithLimits(
 		}
 		plan.EncoderArgs = []string{
 			"-c:v", "h264_videotoolbox",
+			// Don't carry A53 closed captions into the output: VideoToolbox
+			// fails on CC SEI from some WEB-DL HEVC sources ("Unexpected end
+			// of SEI NAL Unit parsing size") and aborts the encode. Players
+			// use the sidecar subtitle tracks.
+			"-a53cc", "0",
 			"-realtime", "1",
 			"-profile:v", "high",
 			"-q:v", "60",

@@ -173,6 +173,9 @@ func TestBuildVideoEncodePlanVideoToolbox(t *testing.T) {
 	if !strings.Contains(joinArgs(plan.EncoderArgs), "h264_videotoolbox") {
 		t.Fatalf("expected videotoolbox encoder, got %v", plan.EncoderArgs)
 	}
+	if !strings.Contains(joinArgs(plan.EncoderArgs), "-a53cc 0") {
+		t.Fatalf("videotoolbox must drop A53 captions, got %v", plan.EncoderArgs)
+	}
 	if len(plan.GlobalArgs) != 0 {
 		t.Fatalf("videotoolbox needs no device init, got %v", plan.GlobalArgs)
 	}
