@@ -44,7 +44,7 @@ func (s *Service) Frame(ctx context.Context, id string, width int) ([]byte, erro
 	var out, stderr bytes.Buffer
 	cmd := execCommandContext(ctx, s.ffmpegPath,
 		"-nostdin", "-v", "error",
-		"-ss", strconv.FormatFloat(frameOffset(*rec, time.Now()).Seconds(), 'f', 1, 64),
+		"-ss", strconv.FormatFloat(frameOffset(*rec, s.recordedUpTo(*rec, time.Now())).Seconds(), 'f', 1, 64),
 		"-i", path,
 		"-frames:v", "1", "-an", "-sn",
 		"-vf", fmt.Sprintf("scale=%d:-2", width),
@@ -57,6 +57,15 @@ func (s *Service) Frame(ctx context.Context, id string, width int) ([]byte, erro
 		return nil, errors.New("ffmpeg wrote no frame")
 	}
 	return out.Bytes(), nil
+}
+
+// recordedUpTo is how far a running recording got: now, or for one catching up from its source's
+// window (backfill.go) its content start plus what it holds.
+func (s *Service) recordedUpTo(rec models.Recording, now time.Time) time.Time {
+	if content, followed := s.RecordedContent(rec.ID); followed && rec.ActualStartAt != nil {
+		return rec.ActualStartAt.Add(content)
+	}
+	return now
 }
 
 // frameOffset picks the still's position: a tenth into the recording, past

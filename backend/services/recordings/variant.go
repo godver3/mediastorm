@@ -59,11 +59,12 @@ var recordingMediaExtensions = map[string]bool{
 
 // recordingStreamChoice is what a recording maps from its source.
 type recordingStreamChoice struct {
-	maps      []string
-	variant   string // the chosen variant's playlist URL; "" for all streams
-	signature string // the chosen variant's BANDWIDTH, RESOLUTION, CODECS and audio renditions
-	playlist  string // where the master was read: the source is a playlist (no HEAD on a retry)
-	final     bool   // all streams for good: no playlist, or FFmpeg found nothing in the variant
+	maps            []string
+	pictureAndSound bool   // everything's picture and sound only (a recording that looked back)
+	variant         string // the chosen variant's playlist URL; "" for all streams
+	signature       string // the chosen variant's BANDWIDTH, RESOLUTION, CODECS and audio renditions
+	playlist        string // where the master was read: the source is a playlist (no HEAD on a retry)
+	final           bool   // all streams for good: no playlist, or FFmpeg found nothing in the variant
 }
 
 func (c recordingStreamChoice) args() []string {
@@ -71,6 +72,11 @@ func (c recordingStreamChoice) args() []string {
 		return recordingAllStreams
 	}
 	return c.maps
+}
+
+// pictureAndSoundStreams maps a source's picture and sound only, for good.
+func pictureAndSoundStreams() recordingStreamChoice {
+	return recordingStreamChoice{maps: []string{"-map", "0:v?", "-map", "0:a?"}, pictureAndSound: true, final: true}
 }
 
 // allRecordingStreams is the choice that maps everything.
@@ -296,13 +302,19 @@ func recordingSourceIsPlaylist(ctx context.Context, sourceURL string) (isPlaylis
 
 // fetchRecordingPlaylist reads an HLS playlist (bounded) and returns it with its final URL.
 func fetchRecordingPlaylist(ctx context.Context, rawURL string) (string, *url.URL, error) {
+	return fetchHLSPlaylist(ctx, recordingHTTPClient, rawURL, recordingMasterLimit, false)
+}
+
+// fetchHLSPlaylist reads an HLS playlist of up to limit bytes; a longer one is cut there, or with
+// whole set refused.
+func fetchHLSPlaylist(ctx context.Context, client *http.Client, rawURL string, limit int64, whole bool) (string, *url.URL, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return "", nil, err
 	}
 	req.Header.Set("User-Agent", recordingMasterUA)
 	req.Close = true
-	resp, err := recordingHTTPClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", nil, err
 	}
@@ -310,9 +322,15 @@ func fetchRecordingPlaylist(ctx context.Context, rawURL string) (string, *url.UR
 	if resp.StatusCode >= http.StatusBadRequest {
 		return "", nil, fmt.Errorf("status %d", resp.StatusCode)
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, recordingMasterLimit))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
 		return "", nil, err
+	}
+	if int64(len(body)) > limit {
+		if whole {
+			return "", nil, fmt.Errorf("playlist larger than %d bytes", limit)
+		}
+		body = body[:limit]
 	}
 	if !strings.HasPrefix(strings.TrimSpace(string(body)), "#EXTM3U") {
 		return "", nil, fmt.Errorf("not an HLS playlist")

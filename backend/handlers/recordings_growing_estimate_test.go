@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -39,20 +40,27 @@ func TestEstimatedRecordingSize(t *testing.T) {
 	started := now.Add(-10 * time.Minute)
 	rec := models.Recording{StartAt: started, ActualStartAt: &started, EndAt: now.Add(20 * time.Minute), PaddingAfterSeconds: 300}
 	// 1 MB/s for 600s so far, 25 more minutes with padding, 10% margin.
-	if got, want := estimatedRecordingSize(rec, 600_000_000, now), int64(600_000_000+1_000_000*1500*1.1); got < want-2 || got > want+2 {
+	if got, want := estimatedRecordingSize(rec, 600_000_000, now, 0), int64(600_000_000+1_000_000*1500*1.1); got < want-2 || got > want+2 {
 		t.Fatalf("estimate = %d, want %d", got, want)
 	}
 	// Running past its end: a minute ahead.
 	rec.EndAt = now.Add(-10 * time.Minute)
-	if got, want := estimatedRecordingSize(rec, 600_000_000, now), int64(600_000_000+1_000_000*60*1.1); got < want-2 || got > want+2 {
+	if got, want := estimatedRecordingSize(rec, 600_000_000, now, 0), int64(600_000_000+1_000_000*60*1.1); got < want-2 || got > want+2 {
 		t.Fatalf("overrunning estimate = %d, want %d", got, want)
 	}
 	// In the first minutes the rate is low (measured from before the source
 	// delivered anything): twice what it says.
 	early := now.Add(-30 * time.Second)
 	rec = models.Recording{StartAt: early, ActualStartAt: &early, EndAt: now.Add(100 * time.Second)}
-	if got, want := estimatedRecordingSize(rec, 30_000_000, now), int64(30_000_000+1_000_000*100*2); got < want-2 || got > want+2 {
+	if got, want := estimatedRecordingSize(rec, 30_000_000, now, 0), int64(30_000_000+1_000_000*100*2); got < want-2 || got > want+2 {
 		t.Fatalf("early estimate = %d, want %d", got, want)
+	}
+	// A recording created 20 minutes into its programme holds the 3 minutes it caught up so far
+	// from the source's window (1 MB a second of content), not 20: 87 minutes are still to come.
+	backdated := now.Add(-20 * time.Minute)
+	rec = models.Recording{StartAt: backdated, ActualStartAt: &backdated, EndAt: now.Add(70 * time.Minute)}
+	if got, want := estimatedRecordingSize(rec, 180_000_000, now, 3*time.Minute), int64(180_000_000+1_000_000*87*60*1.1); got < want-2 || got > want+2 {
+		t.Fatalf("catching-up estimate = %d, want %d", got, want)
 	}
 }
 
@@ -63,9 +71,9 @@ func TestOfferedRecordingSizeNeverShrinks(t *testing.T) {
 	now := time.Date(2026, 11, 20, 20, 0, 0, 0, time.UTC)
 	started := now.Add(-10 * time.Minute)
 	rec := models.Recording{ID: "rec-shrink", StartAt: started, ActualStartAt: &started, EndAt: now.Add(20 * time.Minute)}
-	first := offeredRecordingSize(rec, 600_000_000, now)
+	first := offeredRecordingSize(rec, 600_000_000, now, 0)
 	// Later the rate turns out lower: the estimate would be smaller.
-	if got := offeredRecordingSize(rec, 650_000_000, now.Add(5*time.Minute)); got != first {
+	if got := offeredRecordingSize(rec, 650_000_000, now.Add(5*time.Minute), 0); got != first {
 		t.Fatalf("offered %d after %d", got, first)
 	}
 }
@@ -90,6 +98,45 @@ func TestStreamGrowingRecordingEstimatedHead(t *testing.T) {
 	}
 	if rr.Code != http.StatusOK || rr.Body.Len() != 0 || rr.Header().Get("Content-Length") == "" || time.Since(begin) > time.Second {
 		t.Fatalf("HEAD: %d, %d bytes, length %q, %v", rr.Code, rr.Body.Len(), rr.Header().Get("Content-Length"), time.Since(begin))
+	}
+}
+
+// followedRecordingService reports a recording's content, as the recordings service does for one
+// catching up from its source's DVR window.
+type followedRecordingService struct {
+	lockedRecordingService
+	content atomic.Int64
+}
+
+func (f *followedRecordingService) RecordedContent(string) (time.Duration, bool) {
+	return time.Duration(f.content.Load()), true
+}
+
+// A recording created 20 minutes into its programme is sized by the content it holds, once FFmpeg
+// reported it, not by the 20 minutes since its backdated start.
+func TestStreamGrowingRecordingEstimatedWhileCatchingUp(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "recording.ts")
+	if err := os.WriteFile(path, bytes.Repeat([]byte("x"), 1000), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := growingEstimateMinData
+	growingEstimateMinData = 1
+	t.Cleanup(func() { growingEstimateMinData = old; growingEstimates.Delete("rec-catching-up") })
+	now := time.Now()
+	started := now.Add(-20 * time.Minute)
+	rec := models.Recording{ID: "rec-catching-up", Status: models.RecordingStatusRunning, OutputPath: path,
+		StartAt: started, ActualStartAt: &started, EndAt: now.Add(70 * time.Minute)}
+	service := &followedRecordingService{lockedRecordingService: lockedRecordingService{fakeRecordingService: fakeRecordingService{recording: rec}}}
+	time.AfterFunc(300*time.Millisecond, func() { service.content.Store(int64(2 * time.Minute)) })
+	h := NewRecordingsHandler(service, nil)
+	rr := httptest.NewRecorder()
+	if err := h.streamGrowingRecordingEstimated(rr, httptest.NewRequest(http.MethodHead, "/stream?seekable=estimate", nil), rec, path); err != nil {
+		t.Fatal(err)
+	}
+	// 1000 bytes for 2 minutes of content, 88 minutes to come, 10% margin.
+	length, _ := strconv.ParseInt(rr.Header().Get("Content-Length"), 10, 64)
+	if want := 1000 + 1000.0/120*88*60*1.1; rr.Code != http.StatusOK || float64(length) < want*0.98 || float64(length) > want*1.02 {
+		t.Fatalf("HEAD while catching up: %d, length %d, want about %.0f", rr.Code, length, want)
 	}
 }
 

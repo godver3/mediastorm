@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -89,6 +90,10 @@ type Service struct {
 	// marked running again, a deleted file and path restored).
 	rowMu    sync.Mutex
 	rowLocks map[string]*rowLock
+
+	// contents: recording ID -> *recordedContent, for running recordings that looked back in
+	// their source's window (backfill.go).
+	contents sync.Map
 }
 
 type rowLock struct {
@@ -945,20 +950,116 @@ func (s *Service) startRecording(recording models.Recording) {
 	var streams recordingStreamChoice
 	var recorded int64
 	emptyVariant := 0
+	// Where the recording should begin; a late one looks back in the source's window (backfill.go).
+	// Its content is then followed (-progress): a backfilled attempt that ends before its content
+	// reaches the stop time is continued from there while the window still has it, until deadline.
+	wantStart := recording.StartAt.Add(-time.Duration(recording.PaddingBeforeSeconds) * time.Second)
+	deadline := stopAt
+	lookedBack, backfillPlanned := false, false
+	var contentStart, resumeAt, lastResume time.Time
+	var content *recordedContent
+	resumeFailures := 0
+	defer s.forgetContent(recording.ID)
+	// endOf is where the recording's content ends by ts: for one followed, its content start plus
+	// what it holds, which its backdated start counts from.
+	endOf := func(ts time.Time) time.Time {
+		if content != nil && !contentStart.IsZero() {
+			if total := content.total(); total > 0 {
+				return contentStart.Add(total)
+			}
+		}
+		return ts
+	}
 	for {
-		if time.Until(stopAt) <= 0 {
+		resuming := !resumeAt.IsZero()
+		if time.Until(stopAt) <= 0 && (!resuming || time.Until(deadline) <= 0) {
 			break
 		}
 		attempt++
 
-		lookupCtx, cancelLookup := context.WithDeadline(ctx, stopAt)
+		lookupCtx, cancelLookup := context.WithDeadline(ctx, deadline)
 		streams = chooseRecordingStreams(lookupCtx, recording.SourceURL, streams, recorded > 0)
+		var backfill recordingBackfill
+		var planErr error
+		switch {
+		case resuming:
+			backfill, planErr = planRecordingBackfill(lookupCtx, recording.SourceURL, streams, resumeAt)
+		case recorded == 0 && !backfillPlanned:
+			// Once: a backfilled start that records nothing is not tried again (a window that did
+			// not load is asked again on the next attempt).
+			backfill, planErr = planRecordingBackfill(lookupCtx, recording.SourceURL, streams, wantStart)
+			backfillPlanned = planErr == nil && time.Since(wantStart) >= recordingBackfillMinLate
+			planErr = nil
+		}
 		cancelLookup()
-		if time.Until(stopAt) <= 0 {
+		if resuming && planErr != nil && ctx.Err() == nil && resumeFailures < recordingBackfillResumeTries {
+			// The source's playlist did not load: ask again (the window keeps the content for
+			// hours) rather than going live and leaving the rest out, a few times.
+			resumeFailures++
+			log.Printf("[recordings] recording id=%s: the source's window did not load (%v), asking again", recording.ID, planErr)
+			if !s.waitBeforeRetry(ctx) {
+				s.handleInterruptedRecording(recording.ID, endOf(time.Now().UTC()))
+				return
+			}
+			continue
+		}
+		if backfill.active() {
+			resumeFailures = 0
+		}
+		resumeAt = time.Time{}
+		if time.Until(stopAt) <= 0 && !backfill.active() {
 			break
 		}
-		result := s.runRecordingAttempt(ctx, recording, stopAt, attempt, streams)
+		attemptStreams := streams
+		if backfill.active() {
+			if content == nil {
+				content = s.followContent(recording.ID)
+				deadline = backfill.deadline(stopAt)
+			}
+			if streams.variant == "" && !streams.pictureAndSound {
+				// Everything (-map 0) may hold a stream without packets (subtitles, data), which
+				// holds FFmpeg's progress back: a recording that looks back takes picture and sound.
+				attemptStreams = pictureAndSoundStreams()
+			}
+			if resuming {
+				log.Printf("[recordings] recording id=%s continues from %s in the source's window",
+					recording.ID, backfill.from.UTC().Format(time.RFC3339))
+			}
+		}
+		if !resuming && recorded == 0 && (backfill.active() || lookedBack) {
+			// The recording's content begins where it starts in the source, which its duration
+			// and stills count from.
+			contentStart = time.Now().UTC()
+			if backfill.active() {
+				contentStart = backfill.from.UTC()
+				log.Printf("[recordings] recording id=%s starts %s late: taking it from %s in the source's window",
+					recording.ID, time.Since(wantStart).Round(time.Second), contentStart.Format(time.RFC3339))
+			}
+			if lookedBack && !backfill.active() {
+				// The backfilled start recorded nothing: live from here, as before.
+				content, deadline = nil, stopAt
+				s.forgetContent(recording.ID)
+			}
+			lookedBack = backfill.active()
+			s.setContentStart(recording.ID, contentStart)
+		}
+		attemptDeadline := stopAt
+		if backfill.active() {
+			attemptDeadline = deadline
+		}
+		result := s.runRecordingAttempt(ctx, recording, stopAt, attemptDeadline, attempt, attemptStreams, backfill, content)
 		recorded += result.written
+		if result.written > 0 {
+			// The file has this layout now.
+			streams = attemptStreams
+		}
+		if backfill.active() && !result.stoppedAtSchedule && result.written > 0 && result.content > 0 {
+			// Ended before its content reached the stop time: the next attempt carries on there,
+			// unless this one got no further than the last (then it carries on live).
+			if next := backfill.from.Add(result.content); next.After(lastResume) {
+				resumeAt, lastResume = next, next
+			}
+		}
 		if result.mapsMatchedNothing && streams.variant != "" {
 			emptyVariant++
 			// FFmpeg found nothing in the chosen variant. Before anything is recorded: everything,
@@ -972,7 +1073,7 @@ func (s *Service) startRecording(recording models.Recording) {
 		}
 		finishedAt := time.Now().UTC()
 		if ctx.Err() != nil {
-			s.handleInterruptedRecording(recording.ID, finishedAt)
+			s.handleInterruptedRecording(recording.ID, endOf(finishedAt))
 			return
 		}
 		if result.stoppedAtSchedule {
@@ -988,17 +1089,13 @@ func (s *Service) startRecording(recording models.Recording) {
 		} else {
 			lastErrMsg = "source stream ended before scheduled stop time"
 		}
-		if time.Until(stopAt) <= 0 {
+		if time.Until(stopAt) <= 0 && (resumeAt.IsZero() || time.Until(deadline) <= 0) {
 			break
 		}
 
-		timer := time.NewTimer(recordingRetryDelay)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			s.handleInterruptedRecording(recording.ID, time.Now().UTC())
+		if !s.waitBeforeRetry(ctx) {
+			s.handleInterruptedRecording(recording.ID, endOf(time.Now().UTC()))
 			return
-		case <-timer.C:
 		}
 	}
 
@@ -1010,6 +1107,7 @@ func (s *Service) startRecording(recording models.Recording) {
 	}
 	finishedAt := time.Now().UTC()
 	if latest.Status == models.RecordingStatusCancelled {
+		keepContentEnd(latest, endOf(finishedAt))
 		s.finalizeCancelledRecording(latest)
 		return
 	}
@@ -1021,6 +1119,9 @@ func (s *Service) startRecording(recording models.Recording) {
 	if info, err := os.Stat(latest.OutputPath); err == nil {
 		latest.OutputSizeBytes = info.Size()
 	}
+	// A followed recording holds this much from its content start (FFmpeg got to the stop time
+	// later, and a gap holds nothing): durations count from ActualStartAt.
+	finishedAt = endOf(finishedAt)
 	latest.ActualEndAt = &finishedAt
 	latest.UpdatedAt = finishedAt
 	if latest.OutputSizeBytes > 0 && lastErrMsg == "" {
@@ -1083,13 +1184,21 @@ type recordingAttemptResult struct {
 	errMsg            string
 	// mapsMatchedNothing: FFmpeg found no stream for the -map arguments.
 	mapsMatchedNothing bool
+	// content: what the attempt recorded (FFmpeg's -progress), for recordings that follow it.
+	content time.Duration
+	// reachedContent: a backfilled attempt whose content reached the stop time.
+	reachedContent bool
 }
 
 // runRecordingAttempt captures the source until stopAt (wall clock) or until
 // ffmpeg exits on its own. The stop time is enforced by the recorder rather
 // than ffmpeg's -t, which counts stream timestamps: live sources with forward
 // timestamp jumps made -t end captures minutes early.
-func (s *Service) runRecordingAttempt(ctx context.Context, recording models.Recording, stopAt time.Time, attempt int, streams recordingStreamChoice) recordingAttemptResult {
+//
+// A backfilled attempt (backfill.go) starts behind live and ends when its content reaches stopAt
+// (-t), or at the latest at deadline. With content set, FFmpeg reports what it recorded
+// (-progress) into it.
+func (s *Service) runRecordingAttempt(ctx context.Context, recording models.Recording, stopAt, deadline time.Time, attempt int, streams recordingStreamChoice, backfill recordingBackfill, content *recordedContent) recordingAttemptResult {
 	startedAt := time.Now()
 	flags := os.O_CREATE | os.O_WRONLY
 	if attempt == 1 {
@@ -1109,29 +1218,41 @@ func (s *Service) runRecordingAttempt(ctx context.Context, recording models.Reco
 		startSize = info.Size()
 	}
 
-	args := []string{
-		"-nostdin",
+	args := []string{"-nostdin"}
+	var progressRead, progressWrite *os.File
+	if content != nil {
+		if progressRead, progressWrite, err = os.Pipe(); err == nil {
+			args = append(args, "-progress", "pipe:3", "-stats_period", "1")
+		}
+	}
+	args = append(args,
 		"-loglevel", "warning",
 		"-protocol_whitelist", "file,http,https,pipe,tcp,tls,crypto,udp,rtp,rtmp",
 		"-rw_timeout", fmt.Sprintf("%d", recordingReadTimeout.Microseconds()),
 		"-reconnect", "1",
 		"-reconnect_streamed", "1",
 		"-reconnect_delay_max", "3",
-	}
+	)
 	// An adaptive HLS channel: only its best variant with its own audio tracks (variant.go), read
 	// with the User-Agent the variant was chosen with.
 	if streams.variant != "" {
 		args = append(args, "-user_agent", recordingMasterUA)
 	}
+	if backfill.active() {
+		args = append(args, "-live_start_index", strconv.Itoa(backfill.liveStartIndex))
+	}
 	args = append(args, "-i", recording.SourceURL)
 	args = append(args, streams.args()...)
+	if backfill.active() {
+		args = append(args, "-t", strconv.FormatFloat(backfill.contentLimit(stopAt).Seconds(), 'f', 3, 64))
+	}
 	args = append(args,
 		"-c", "copy",
 		"-mpegts_flags", "+resend_headers",
 		"-f", "mpegts",
 		"pipe:1",
 	)
-	attemptCtx, cancelAttempt := context.WithDeadline(ctx, stopAt)
+	attemptCtx, cancelAttempt := context.WithDeadline(ctx, deadline)
 	defer cancelAttempt()
 	cmd := execCommandContext(attemptCtx, s.ffmpegPath, args...)
 	// Stop gracefully so ffmpeg flushes buffered packets, then kill if it hangs.
@@ -1140,15 +1261,35 @@ func (s *Service) runRecordingAttempt(ctx context.Context, recording models.Reco
 	cmd.Stdout = outputFile
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
+	if progressWrite != nil {
+		cmd.ExtraFiles = []*os.File{progressWrite}
+	}
 
 	log.Printf("[recordings] attempt start id=%s attempt=%d remaining=%s",
 		recording.ID, attempt, time.Until(stopAt).Round(time.Second))
 	if err := cmd.Start(); err != nil {
+		if progressWrite != nil {
+			progressWrite.Close()
+			progressRead.Close()
+		}
 		msg := fmt.Sprintf("start ffmpeg: %v", err)
 		log.Printf("[recordings] attempt failed id=%s attempt=%d error=%q", recording.ID, attempt, msg)
 		return recordingAttemptResult{err: err, errMsg: msg}
 	}
+	followed := followAttempt(cmd, progressRead, progressWrite, content, backfill, stopAt)
 	waitErr := cmd.Wait()
+	got, reached := followed()
+	if reached && time.Until(stopAt) > 2*recordingBackfillClockSlack {
+		// Content cannot run that far ahead of the clock: its timestamps jumped. Not done; the
+		// next attempt carries on live.
+		log.Printf("[recordings] attempt id=%s attempt=%d: content reached the stop time %s early (timestamps jumped)",
+			recording.ID, attempt, time.Until(stopAt).Round(time.Second))
+		reached = false
+		if content != nil {
+			// It holds about as much as it ran, not what the jumped timestamps say.
+			content.done.Add(int64((time.Since(startedAt) - got) / time.Microsecond))
+		}
+	}
 
 	written := int64(0)
 	if info, err := outputFile.Stat(); err == nil {
@@ -1158,10 +1299,18 @@ func (s *Service) runRecordingAttempt(ctx context.Context, recording models.Reco
 	errMsg := truncateRecordingError(stderr.String())
 	mapsMatchedNothing := strings.Contains(stderr.String(), "matches no streams")
 
+	if ctx.Err() == nil && written > 0 && (reached || (backfill.active() && got == 0 && waitErr == nil && !time.Now().Before(stopAt))) {
+		// A backfilled attempt whose content reached the stop time (-t): it ran to completion,
+		// however late by the wall clock. (Without progress reports: ending by itself after the
+		// wall clock reached the stop time.)
+		log.Printf("[recordings] attempt reached stop time in its content id=%s attempt=%d elapsed=%s bytes=%d content=%s",
+			recording.ID, attempt, elapsed, written, got.Round(time.Second))
+		return recordingAttemptResult{stoppedAtSchedule: true, written: written, content: got, reachedContent: true}
+	}
 	if ctx.Err() == nil && errors.Is(attemptCtx.Err(), context.DeadlineExceeded) {
 		log.Printf("[recordings] attempt reached stop time id=%s attempt=%d elapsed=%s bytes=%d",
 			recording.ID, attempt, elapsed, written)
-		return recordingAttemptResult{stoppedAtSchedule: true, written: written}
+		return recordingAttemptResult{stoppedAtSchedule: true, written: written, content: got}
 	}
 	if waitErr != nil && errMsg == "" {
 		errMsg = waitErr.Error()
@@ -1171,7 +1320,7 @@ func (s *Service) runRecordingAttempt(ctx context.Context, recording models.Reco
 		// last warning (often a harmless one about the source) is not why.
 		log.Printf("[recordings] attempt stopped id=%s attempt=%d elapsed=%s bytes=%d: recording cancelled or service stopping",
 			recording.ID, attempt, elapsed, written)
-		return recordingAttemptResult{err: waitErr, errMsg: errMsg, written: written, mapsMatchedNothing: mapsMatchedNothing}
+		return recordingAttemptResult{err: waitErr, errMsg: errMsg, written: written, mapsMatchedNothing: mapsMatchedNothing, content: got}
 	}
 	exitCode := -1
 	if cmd.ProcessState != nil {
@@ -1179,7 +1328,7 @@ func (s *Service) runRecordingAttempt(ctx context.Context, recording models.Reco
 	}
 	log.Printf("[recordings] attempt ended early id=%s attempt=%d exit=%d elapsed=%s bytes=%d remaining=%s stderr=%q",
 		recording.ID, attempt, exitCode, elapsed, written, time.Until(stopAt).Round(time.Second), errMsg)
-	return recordingAttemptResult{err: waitErr, errMsg: errMsg, written: written, mapsMatchedNothing: mapsMatchedNothing}
+	return recordingAttemptResult{err: waitErr, errMsg: errMsg, written: written, mapsMatchedNothing: mapsMatchedNothing, content: got}
 }
 
 // redactSourceURL keeps only scheme and host: IPTV source URLs often carry
@@ -1200,11 +1349,51 @@ func (s *Service) handleInterruptedRecording(id string, ts time.Time) {
 		return
 	}
 	if latest.Status == models.RecordingStatusCancelled {
+		keepContentEnd(latest, ts)
 		s.finalizeCancelledRecording(latest)
 		return
 	}
 	msg := s.repairRecordingOutput(latest, "recording interrupted before scheduled stop time")
 	s.finalizeFailure(*latest, ts, msg)
+}
+
+// keepContentEnd moves a cancelled recording's end back to where its content ends (a recording
+// that looked back in its source's window holds less than the clock says).
+func keepContentEnd(recording *models.Recording, contentEnd time.Time) {
+	if recording.ActualEndAt == nil || contentEnd.Before(*recording.ActualEndAt) {
+		recording.ActualEndAt = &contentEnd
+	}
+}
+
+// recordingBackfillResumeTries: how often a backfilled recording asks again for a window that did
+// not load before it carries on live.
+const recordingBackfillResumeTries = 5
+
+// waitBeforeRetry waits recordingRetryDelay; false when the recording was stopped meanwhile.
+func (s *Service) waitBeforeRetry(ctx context.Context) bool {
+	timer := time.NewTimer(recordingRetryDelay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+// setContentStart records where a running recording's content begins (ActualStartAt): earlier
+// than the recorder started when it looked back in the source's window.
+func (s *Service) setContentStart(id string, at time.Time) {
+	defer s.lockRecording(id)()
+	latest, err := s.Get(id)
+	if err != nil || latest.Status != models.RecordingStatusRunning {
+		return
+	}
+	latest.ActualStartAt = &at
+	latest.UpdatedAt = time.Now().UTC()
+	if err := s.repo.Update(context.Background(), latest); err != nil {
+		log.Printf("[recordings] update content start failed: %v", err)
+	}
 }
 
 func (s *Service) finalizeCancelledRecording(recording *models.Recording) {

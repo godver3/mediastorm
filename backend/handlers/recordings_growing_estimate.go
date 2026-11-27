@@ -62,30 +62,47 @@ var growingEstimateMinData int64 = 1 << 20
 // smaller estimate.
 var growingEstimates sync.Map // recording ID -> int64
 
-// estimatedRecordingSize is the size a running recording will probably have.
-func estimatedRecordingSize(rec models.Recording, size int64, now time.Time) int64 {
+// estimatedRecordingSize is the size a running recording will probably have. content is what it
+// holds so far when the recorder knows (a recording catching up from its source's DVR window
+// fills faster than the clock runs); 0: as much as has passed since its start.
+func estimatedRecordingSize(rec models.Recording, size int64, now time.Time, content time.Duration) int64 {
 	start := rec.StartAt
 	if rec.ActualStartAt != nil {
 		start = *rec.ActualStartAt
 	}
 	end := rec.EndAt.Add(time.Duration(rec.PaddingAfterSeconds) * time.Second)
-	elapsed := now.Sub(start).Seconds()
-	if size <= 0 || elapsed < 1 {
+	recorded, position := now.Sub(start).Seconds(), now
+	if content > 0 {
+		recorded, position = content.Seconds(), start.Add(content)
+	}
+	if size <= 0 || recorded < 1 {
 		return size
 	}
-	rate := float64(size) / elapsed
+	rate := float64(size) / recorded
 	margin := growingEstimateMargin
-	if elapsed < growingEstimateEarly.Seconds() {
+	if recorded < growingEstimateEarly.Seconds() {
 		margin = growingEstimateEarlyMargin
 	}
-	remaining := max(end.Sub(now).Seconds(), 60) // running past its end: a minute ahead
+	remaining := max(end.Sub(position).Seconds(), 60) // running past its end: a minute ahead
 	return size + int64(rate*remaining*margin)
+}
+
+// recordedContent is how much content a running recording holds when the recordings service
+// follows it (followed; 0 until FFmpeg's first report): one catching up from its source's DVR
+// window fills faster than the clock runs.
+func (h *RecordingsHandler) recordedContent(id string) (content time.Duration, followed bool) {
+	if follower, ok := h.service.(interface {
+		RecordedContent(string) (time.Duration, bool)
+	}); ok {
+		return follower.RecordedContent(id)
+	}
+	return 0, false
 }
 
 // offeredRecordingSize is estimatedRecordingSize, never smaller than what was
 // offered for the recording before.
-func offeredRecordingSize(rec models.Recording, size int64, now time.Time) int64 {
-	total := estimatedRecordingSize(rec, size, now)
+func offeredRecordingSize(rec models.Recording, size int64, now time.Time, content time.Duration) int64 {
+	total := estimatedRecordingSize(rec, size, now, content)
 	for {
 		prev, loaded := growingEstimates.LoadOrStore(rec.ID, total)
 		if !loaded {
@@ -155,9 +172,31 @@ func (h *RecordingsHandler) streamGrowingRecordingEstimated(w http.ResponseWrite
 			return err
 		}
 	}
+	content, followed := h.recordedContent(rec.ID)
+	if followed && content <= 0 {
+		// Catching up from the source's window without a report yet: the time since its
+		// (backdated) start says nothing about what the file holds. Wait for one.
+		waitUntil := time.Now().Add(growingEstimateWait)
+		for followed && content <= 0 && time.Now().Before(waitUntil) {
+			select {
+			case <-r.Context().Done():
+				return nil
+			case <-time.After(growingEstimatePoll):
+			}
+			content, followed = h.recordedContent(rec.ID)
+		}
+		if followed && content <= 0 {
+			w.Header().Set("Retry-After", "5")
+			http.Error(w, "recording has no data yet", http.StatusServiceUnavailable)
+			return nil
+		}
+		if info, err = file.Stat(); err != nil {
+			return err
+		}
+	}
 	size := info.Size()
 	now := time.Now()
-	total := offeredRecordingSize(rec, size, now)
+	total := offeredRecordingSize(rec, size, now, content)
 	if total <= 0 {
 		w.Header().Set("Retry-After", "5")
 		http.Error(w, "recording has no data yet", http.StatusServiceUnavailable)
@@ -181,7 +220,11 @@ func (h *RecordingsHandler) streamGrowingRecordingEstimated(w http.ResponseWrite
 		if rec.ActualStartAt != nil {
 			started = *rec.ActualStartAt
 		}
-		rate := float64(size) / max(now.Sub(started).Seconds(), 1)
+		recorded := now.Sub(started).Seconds()
+		if content > 0 {
+			recorded = content.Seconds()
+		}
+		rate := float64(size) / max(recorded, 1)
 		switch {
 		case float64(start-size) <= rate*growingEstimateLiveEdge.Seconds():
 			if !h.waitForBytes(r, rec.ID, file, start) {
