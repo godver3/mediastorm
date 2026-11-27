@@ -411,6 +411,8 @@ type HLSSession struct {
 	PlaybackPaused    bool
 	PlaybackBuffering bool
 	PlaybackEnded     bool
+	// lastKeepAlive is when the player's last keepalive arrived (liveIdleTimeout).
+	lastKeepAlive time.Time
 
 	// Track selection (-1 means use default)
 	AudioTrackIndex    int // Selected audio stream index (ffprobe index), -1 = all/default
@@ -656,6 +658,9 @@ const (
 	// can be more than hlsIdleTimeout apart while the viewer means to come back. The window's
 	// pruning bounds what the session keeps on disk meanwhile.
 	liveIdleTimeoutPaused = 5 * time.Minute
+	// liveKeepAliveFresh: the paused timeout applies only while keepalives keep arriving this
+	// often; a tab closed while paused stops sending them and gets hlsIdleTimeout.
+	liveKeepAliveFresh = 2 * time.Minute
 
 	// How long to wait before checking if FFmpeg is stuck (not generating segments)
 	// If FFmpeg IS generating segments, we let it run - throttle limits buffering
@@ -2996,8 +3001,8 @@ func (m *HLSManager) startLiveTranscoding(ctx context.Context, session *HLSSessi
 		} else if webCheckAnswered {
 			session.webVideoCopy, session.webVideoCopyDecided = copyVideo, true
 		}
-		// A check that failed (a slow or failing source at tune-in) encodes this run only; the
-		// next run checks again.
+		// A probe that failed decided "encode" too (liveWebVideoCopy), so a restart does not probe
+		// again; only a peek that found no codec leaves the decision to the next run.
 		session.mu.Unlock()
 	}
 
@@ -3074,6 +3079,11 @@ func (m *HLSManager) startLiveTranscoding(ctx context.Context, session *HLSSessi
 		var liveStartIndex int
 		startNumber, liveStartIndex = m.prepareLiveBacklog(ctx, session, session.Path, inputArg, inputHeaders)
 		if liveStartIndex < 0 {
+			args = append(args, "-live_start_index", strconv.Itoa(liveStartIndex))
+		}
+	} else if resumeFrom > 0 && hlsInput && proxyBody == nil {
+		// A first run that died before writing a live segment: start after the backlog again.
+		if liveStartIndex := m.liveBacklogRestartStartIndex(ctx, session, resumeFrom); liveStartIndex < 0 {
 			args = append(args, "-live_start_index", strconv.Itoa(liveStartIndex))
 		}
 	}
@@ -5724,6 +5734,7 @@ func (m *HLSManager) KeepAlive(w http.ResponseWriter, r *http.Request, sessionID
 	now := time.Now()
 	session.mu.Lock()
 	session.LastSegmentRequest = now
+	session.lastKeepAlive = now
 	playbackPosition := session.PlaybackPosition
 	hasPlaybackPosition := false
 

@@ -77,15 +77,20 @@ func TestBrowserSafeProbedVideo(t *testing.T) {
 		out  string
 		safe bool
 	}{
-		{"h264,High,yuv420p\n", true},
-		{"h264,Main,yuvj420p\nh264,High,yuv420p\n", true},
-		{"h264,High 10,yuv420p10le\n", false},
-		{"h264,High 10,yuv420p\n", false}, // 8-bit content in a profile browsers do not decode
-		{"h264,High 4:4:4 Predictive,yuv420p\n", false},
-		{"h264,Extended,yuv420p\n", false},
-		{"h264,Constrained Baseline,yuv420p\n", true},
-		{"h264,High,yuv420p\nhevc,Main,yuv420p\n", false},
-		{"mpeg2video,Main,yuv420p\n", false},
+		{"h264,High,yuv420p,progressive\n", true},
+		{"h264,Main,yuvj420p,progressive\nh264,High,yuv420p,progressive\n", true},
+		{"h264,High 10,yuv420p10le,progressive\n", false},
+		{"h264,High 10,yuv420p,progressive\n", false}, // 8-bit content in a profile browsers do not decode
+		{"h264,High 4:4:4 Predictive,yuv420p,progressive\n", false},
+		{"h264,Extended,yuv420p,progressive\n", false},
+		{"h264,Constrained Baseline,yuv420p,progressive\n", true},
+		{"h264,High,yuv420p,progressive\nhevc,Main,yuv420p,progressive\n", false},
+		{"mpeg2video,Main,yuv420p,progressive\n", false},
+		// Interlaced (or unknown) field order is encoded.
+		{"h264,High,yuv420p,tt\n", false},
+		{"h264,High,yuv420p,tb\n", false},
+		{"h264,High,yuv420p,unknown\n", false},
+		{"h264,High,yuv420p\n", false},
 		{"", false},
 	} {
 		if got := browserSafeProbedVideo(tc.out); got != tc.safe {
@@ -234,16 +239,18 @@ func TestLiveKeepAliveDoesNotMapWatchTimeToSegments(t *testing.T) {
 	}
 }
 
-// Only a check that found a codec decides for the session: a failing or empty probe (a slow or
-// failing source at tune-in) encodes that run and leaves the decision to the next one.
-func TestLiveWebVideoCopyAnswersOnlyWithACodec(t *testing.T) {
+// A probe decides for the session whatever it finds: a failing or empty probe decides "encode",
+// so a restart does not probe again. A non-HLS input is never probed (a second connection to a
+// provider that may allow one).
+func TestLiveWebVideoCopyAnswers(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fake ffprobe shell script is POSIX-only")
 	}
 	dir := t.TempDir()
+	marker := filepath.Join(dir, "probed")
 	probe := func(name, body string) *HLSManager {
 		path := filepath.Join(dir, name)
-		if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
+		if err := os.WriteFile(path, []byte("#!/bin/sh\ntouch "+marker+"\n"+body+"\n"), 0o755); err != nil {
 			t.Fatal(err)
 		}
 		return &HLSManager{ffprobePath: path}
@@ -252,15 +259,30 @@ func TestLiveWebVideoCopyAnswersOnlyWithACodec(t *testing.T) {
 		name, body       string
 		copied, answered bool
 	}{
-		{"safe", "echo h264,High,yuv420p", true, true},
-		{"unsafe", "echo hevc,Main,yuv420p", false, true},
-		{"failing", "exit 1", false, false},
-		{"empty", "exit 0", false, false},
+		{"safe", "echo h264,High,yuv420p,progressive", true, true},
+		{"interlaced", "echo h264,High,yuv420p,tt", false, true},
+		{"unsafe", "echo hevc,Main,yuv420p,progressive", false, true},
+		{"failing", "exit 1", false, true},
+		{"empty", "exit 0", false, true},
 	} {
-		copied, answered := probe(tc.name, tc.body).liveWebVideoCopy(context.Background(), "s", "", nil, "http://provider.invalid/live.ts", nil, false)
+		copied, answered := probe(tc.name, tc.body).liveWebVideoCopy(context.Background(), "s", "", nil, "http://provider.invalid/live.m3u8", nil, true)
 		if copied != tc.copied || answered != tc.answered {
 			t.Errorf("%s: copy=%v answered=%v, want %v %v", tc.name, copied, answered, tc.copied, tc.answered)
 		}
+	}
+	_ = os.Remove(marker)
+	copied, answered := probe("ts", "echo h264,High,yuv420p,progressive").liveWebVideoCopy(context.Background(), "s", "", nil, "http://provider.invalid/live.ts", nil, false)
+	if copied || !answered {
+		t.Errorf("non-HLS input: copy=%v answered=%v, want false true", copied, answered)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Errorf("non-HLS input was probed")
+	}
+	// A session stopping meanwhile leaves the decision open.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, answered := probe("cancelled", "exit 1").liveWebVideoCopy(ctx, "s", "", nil, "http://provider.invalid/live.m3u8", nil, true); answered {
+		t.Errorf("cancelled check answered")
 	}
 }
 
@@ -272,8 +294,14 @@ func TestLiveIdleTimeoutForPausedTimeshift(t *testing.T) {
 		t.Fatalf("playing timeshift session: %v, want %v", got, hlsIdleTimeout)
 	}
 	session.PlaybackPaused = true
+	session.lastKeepAlive = time.Now().Add(-time.Minute)
 	if got := liveIdleTimeout(session); got != liveIdleTimeoutPaused || got < 3*time.Minute {
 		t.Fatalf("paused timeshift session: %v, want %v", got, liveIdleTimeoutPaused)
+	}
+	// A tab closed while paused sends no more keepalives: the normal timeout applies again.
+	session.lastKeepAlive = time.Now().Add(-liveKeepAliveFresh - time.Second)
+	if got := liveIdleTimeout(session); got != hlsIdleTimeout {
+		t.Fatalf("paused timeshift session without keepalives: %v, want %v", got, hlsIdleTimeout)
 	}
 	if got := liveIdleTimeout(&HLSSession{IsLive: true, PlaybackPaused: true}); got != hlsIdleTimeout {
 		t.Fatalf("paused session without timeshift: %v, want %v", got, hlsIdleTimeout)

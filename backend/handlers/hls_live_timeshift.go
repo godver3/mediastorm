@@ -119,9 +119,10 @@ func trimLivePlaylistWindow(session *HLSSession) {
 }
 
 // liveIdleTimeout is how long a live session may go without requests before it is stopped: longer
-// for a paused timeshift session (liveIdleTimeoutPaused). Caller holds session.mu.
+// for a paused timeshift session (liveIdleTimeoutPaused) whose player still sends keepalives
+// (the last within liveKeepAliveFresh). Caller holds session.mu.
 func liveIdleTimeout(session *HLSSession) time.Duration {
-	if session.isTimeshiftSession() && session.PlaybackPaused {
+	if session.isTimeshiftSession() && session.PlaybackPaused && time.Since(session.lastKeepAlive) <= liveKeepAliveFresh {
 		return liveIdleTimeoutPaused
 	}
 	return hlsIdleTimeout

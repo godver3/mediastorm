@@ -92,18 +92,22 @@ func liveWebMasterVideoCopy(playlist string) (decided, copy bool) {
 	return true, true
 }
 
-// browserSafeProbedVideo reads ffprobe's codec_name,profile,pix_fmt csv lines (one per video
-// stream): every one must be H.264 in a browser profile and 8-bit 4:2:0, and there must be one.
+// browserSafeProbedVideo reads ffprobe's codec_name,profile,pix_fmt,field_order csv lines (one
+// per video stream): every one must be progressive H.264 in a browser profile and 8-bit 4:2:0,
+// and there must be one. Interlaced video is encoded (deinterlaced): browsers show copied fields
+// combed.
 func browserSafeProbedVideo(out string) bool {
 	seen := false
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 		fields := strings.Split(strings.TrimSpace(line), ",")
-		if len(fields) < 3 || strings.TrimSpace(fields[0]) == "" {
+		if len(fields) < 4 || strings.TrimSpace(fields[0]) == "" {
 			continue
 		}
-		profile := strings.TrimSpace(strings.Join(fields[1:len(fields)-1], ","))
-		pixFmt := strings.TrimSpace(fields[len(fields)-1])
-		if fields[0] != "h264" || !liveWebSafeProbedProfiles[profile] || (pixFmt != "yuv420p" && pixFmt != "yuvj420p") {
+		profile := strings.TrimSpace(strings.Join(fields[1:len(fields)-2], ","))
+		pixFmt := strings.TrimSpace(fields[len(fields)-2])
+		fieldOrder := strings.TrimSpace(fields[len(fields)-1])
+		if fields[0] != "h264" || !liveWebSafeProbedProfiles[profile] || (pixFmt != "yuv420p" && pixFmt != "yuvj420p") ||
+			fieldOrder != "progressive" {
 			return false
 		}
 		seen = true
@@ -113,13 +117,20 @@ func browserSafeProbedVideo(out string) bool {
 
 // liveWebVideoCopy decides for a web session whose input FFmpeg reads by URL. The channel URL
 // (masterURL, read with masterHeaders) decides when it is a master whose variants all name their
-// codecs; otherwise ffprobe reads FFmpeg's input (inputArg with inputHeaders). answered is false
-// when the check found no codec (an error, a timeout, no video stream): copy is then false for this
-// run only, and the caller does not keep the decision.
+// codecs; otherwise, for an HLS input, ffprobe reads FFmpeg's input (inputArg with inputHeaders).
+// A non-HLS input (raw MPEG-TS IPTV) is not probed: that would open a second connection to the
+// provider, which breaks providers allowing one, and delay the tune; it is encoded. answered is
+// false only when ctx ended (the session is stopping); a probe that fails or finds no video
+// stream answers "encode", so a restart does not probe again.
 func (m *HLSManager) liveWebVideoCopy(ctx context.Context, sessionID, masterURL string, masterHeaders map[string]string, inputArg string, inputHeaders map[string]string, hlsInput bool) (copy, answered bool) {
+	parent := ctx
 	ctx, cancel := context.WithTimeout(ctx, liveWebCodecCheckTimeout)
 	defer cancel()
-	if hlsInput && isHTTPURL(masterURL) {
+	if !hlsInput {
+		log.Printf("[hls] live session %s: web video copy=false (a non-HLS input is not probed)", sessionID)
+		return false, true
+	}
+	if isHTTPURL(masterURL) {
 		if client, err := newLiveBacklogClient(); err == nil {
 			body, _, err := fetchHLSPlaylist(ctx, client, masterURL, masterHeaders)
 			client.CloseIdleConnections()
@@ -135,20 +146,21 @@ func (m *HLSManager) liveWebVideoCopy(ctx context.Context, sessionID, masterURL 
 	if h := ffmpegHeadersArg(inputHeaders); h != "" {
 		args = append(args, "-headers", h)
 	}
-	if hlsInput {
-		args = append(args, "-allowed_extensions", "ALL", "-allowed_segment_extensions", "ALL", "-extension_picky", "0")
-	}
-	args = append(args, "-select_streams", "v", "-show_entries", "stream=codec_name,profile,pix_fmt", "-of", "csv=p=0", inputArg)
+	args = append(args, "-allowed_extensions", "ALL", "-allowed_segment_extensions", "ALL", "-extension_picky", "0")
+	args = append(args, "-select_streams", "v", "-show_entries", "stream=codec_name,profile,pix_fmt,field_order", "-of", "csv=p=0", inputArg)
 	cmd := exec.CommandContext(ctx, m.ffprobePath, args...)
 	cmd.Stderr = io.Discard
 	out, err := cmd.Output()
-	if err != nil {
-		log.Printf("[hls] live session %s: web video copy=false for now (probe failed: %v)", sessionID, err)
+	if parent.Err() != nil {
 		return false, false
+	}
+	if err != nil {
+		log.Printf("[hls] live session %s: web video copy=false (probe failed: %v)", sessionID, err)
+		return false, true
 	}
 	copy = browserSafeProbedVideo(string(out))
 	log.Printf("[hls] live session %s: web video copy=%v (probed %q)", sessionID, copy, strings.TrimSpace(string(out)))
-	return copy, strings.TrimSpace(string(out)) != ""
+	return copy, true
 }
 
 var (

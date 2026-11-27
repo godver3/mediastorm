@@ -560,7 +560,7 @@ type liveBacklogSource struct {
 // resolveLiveBacklogSource reads a channel URL (a media playlist, or a master and its chosen
 // renditions); ok is false when it is not a usable live HLS source.
 func resolveLiveBacklogSource(ctx context.Context, client *http.Client, sourceURL string, headers map[string]string) (liveBacklogSource, bool, error) {
-	body, final, err := fetchHLSPlaylist(ctx, client, sourceURL, headers)
+	body, final, err := fetchHLSPlaylist(ctx, client, sourceURL, liveHeadersFor(headers, sourceURL, sourceURL))
 	if err != nil {
 		return liveBacklogSource{}, false, err
 	}
@@ -572,13 +572,13 @@ func resolveLiveBacklogSource(ctx context.Context, client *http.Client, sourceUR
 	if !isMaster || !isHTTPURL(renditions.VideoURL) || (renditions.AudioURL != "" && !isHTTPURL(renditions.AudioURL)) {
 		return liveBacklogSource{}, false, nil
 	}
-	videoBody, videoURL, err := fetchHLSPlaylist(ctx, client, renditions.VideoURL, headers)
+	videoBody, videoURL, err := fetchHLSPlaylist(ctx, client, renditions.VideoURL, liveHeadersFor(headers, sourceURL, renditions.VideoURL))
 	if err != nil {
 		return liveBacklogSource{}, false, err
 	}
 	src.videoPlaylist, src.video = videoURL.String(), parseHLSMediaPlaylist(videoBody, videoURL)
 	if renditions.AudioURL != "" {
-		audioBody, audioURL, err := fetchHLSPlaylist(ctx, client, renditions.AudioURL, headers)
+		audioBody, audioURL, err := fetchHLSPlaylist(ctx, client, renditions.AudioURL, liveHeadersFor(headers, sourceURL, renditions.AudioURL))
 		if err != nil {
 			return liveBacklogSource{}, false, err
 		}
@@ -588,6 +588,29 @@ func resolveLiveBacklogSource(ctx context.Context, client *http.Client, sourceUR
 		}
 	}
 	return src, src.video.ok, nil
+}
+
+// liveHeadersFor is headers for a request to target: credentials (Authorization, Cookie and
+// Proxy-Authorization) go only to the channel URL's host, not to a CDN or another host a playlist
+// points at.
+func liveHeadersFor(headers map[string]string, channelURL, target string) map[string]string {
+	if len(headers) == 0 {
+		return headers
+	}
+	cu, err1 := url.Parse(channelURL)
+	tu, err2 := url.Parse(target)
+	if err1 == nil && err2 == nil && cu.Host != "" && strings.EqualFold(cu.Hostname(), tu.Hostname()) {
+		return headers
+	}
+	out := make(map[string]string, len(headers))
+	for key, value := range headers {
+		switch strings.ToLower(strings.TrimSpace(key)) {
+		case "authorization", "cookie", "proxy-authorization":
+			continue
+		}
+		out[key] = value
+	}
+	return out
 }
 
 func newLiveBacklogClient() (*http.Client, error) {
@@ -630,9 +653,9 @@ func (m *HLSManager) prepareLiveBacklog(ctx context.Context, session *HLSSession
 	newest := segments[len(segments)-1]
 	audioKind := ""
 	if newest.AudioURL != "" {
-		audioKind = liveBacklogSegmentKind(reqCtx, client, newest.AudioURL, headers)
+		audioKind = liveBacklogSegmentKind(reqCtx, client, newest.AudioURL, liveHeadersFor(headers, channelURL, newest.AudioURL))
 	}
-	if liveBacklogSegmentKind(reqCtx, client, newest.VideoURL, headers) != liveBacklogSegmentTS ||
+	if liveBacklogSegmentKind(reqCtx, client, newest.VideoURL, liveHeadersFor(headers, channelURL, newest.VideoURL)) != liveBacklogSegmentTS ||
 		(newest.AudioURL != "" && audioKind != liveBacklogSegmentTS && audioKind != liveBacklogSegmentPacked) {
 		log.Printf("[hls] live session %s: no timeshift backlog (the source's segments are neither MPEG-TS nor packed audio)", session.ID)
 		return 0, 0
@@ -642,20 +665,12 @@ func (m *HLSManager) prepareLiveBacklog(ctx context.Context, session *HLSSession
 	// a moment later; should the source add a segment just then (or a CDN edge serve an older
 	// copy), one segment at the seam is missing (or repeated). There is no shared timeline to
 	// check against: the live encode's timestamps are its own.
-	liveStartIndex := 0
-	if body, base, err := fetchHLSPlaylist(reqCtx, client, src.videoPlaylist, headers); err == nil {
-		now := parseHLSMediaPlaylist(body, base)
-		for i, seg := range now.Segments {
-			// Segments are looked up by media sequence later: a source whose sequence does not
-			// follow its segments (it never advances) would serve other segments under it.
-			if seg.Sequence == newest.Sequence && !sameHLSSegment(seg.URI, newest.VideoURL) {
-				log.Printf("[hls] live session %s: no timeshift backlog (the source's media sequence does not follow its segments)", session.ID)
-				return 0, 0
-			}
-			if seg.Sequence == newest.Sequence+1 {
-				liveStartIndex = i - len(now.Segments)
-			}
-		}
+	liveStartIndex, consistent := liveStartIndexAfter(reqCtx, client, src.videoPlaylist, channelURL, headers, newest)
+	if !consistent {
+		// Segments are looked up by media sequence later: a source whose sequence does not
+		// follow its segments (it never advances) would serve other segments under it.
+		log.Printf("[hls] live session %s: no timeshift backlog (the source's media sequence does not follow its segments)", session.ID)
+		return 0, 0
 	}
 
 	entries := make([]livePlaylistEntry, len(segments))
@@ -694,6 +709,55 @@ func (m *HLSManager) prepareLiveBacklog(ctx context.Context, session *HLSSession
 	log.Printf("[hls] live session %s: timeshift backlog of %d segments (%.0fs of the source's %s window, %s), live from index %d",
 		session.ID, len(segments), backlogDuration, sourceWindow.Round(time.Second), requestsecurity.URLForLog(channelURL), liveStartIndex)
 	return len(segments), liveStartIndex
+}
+
+// liveStartIndexAfter reads the source's video playlist as it is now and returns the
+// live_start_index (negative, from the end) of the segment after newest, 0 when it is not listed.
+// consistent is false when the playlist lists another segment under newest's media sequence.
+func liveStartIndexAfter(ctx context.Context, client *http.Client, playlistURL, channelURL string, headers map[string]string, newest liveBacklogSegment) (index int, consistent bool) {
+	body, base, err := fetchHLSPlaylist(ctx, client, playlistURL, liveHeadersFor(headers, channelURL, playlistURL))
+	if err != nil {
+		return 0, true
+	}
+	now := parseHLSMediaPlaylist(body, base)
+	for i, seg := range now.Segments {
+		if seg.Sequence == newest.Sequence && !sameHLSSegment(seg.URI, newest.VideoURL) {
+			return 0, false
+		}
+		if seg.Sequence == newest.Sequence+1 {
+			index = i - len(now.Segments)
+		}
+	}
+	return index, true
+}
+
+// liveBacklogRestartStartIndex is the live_start_index for a restart whose earlier run wrote no
+// live segment (resumeFrom is still the backlog's end): without it FFmpeg would start at the live
+// edge, leaving a silent gap after the backlog. 0 when that does not apply or cannot be found.
+func (m *HLSManager) liveBacklogRestartStartIndex(ctx context.Context, session *HLSSession, resumeFrom int) int {
+	session.mu.RLock()
+	backlog := session.liveBacklog
+	outputDir := session.OutputDir
+	session.mu.RUnlock()
+	if backlog == nil || backlog.withdrawn.Load() || len(backlog.segments) == 0 ||
+		resumeFrom != len(backlog.segments) || nextLiveSegmentNumber(outputDir) > len(backlog.segments) {
+		return 0
+	}
+	client, err := newLiveBacklogClient()
+	if err != nil {
+		return 0
+	}
+	defer client.CloseIdleConnections()
+	reqCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	backlog.mu.Lock()
+	videoPlaylist := backlog.videoPlaylist
+	backlog.mu.Unlock()
+	index, consistent := liveStartIndexAfter(reqCtx, client, videoPlaylist, backlog.sourceURL, backlog.headers, backlog.segments[len(backlog.segments)-1])
+	if !consistent {
+		return 0
+	}
+	return index
 }
 
 // segmentURLs look a backlog segment up in fresh copies of the source playlists, so expiring
@@ -759,7 +823,7 @@ func (b *liveBacklog) lookup(ctx context.Context, client *http.Client, playlistU
 	cached, ok := b.playlists[playlistURL]
 	b.mu.Unlock()
 	if !ok || time.Since(cached.fetched) > liveBacklogPlaylistMaxAge {
-		body, base, err := fetchHLSPlaylist(ctx, client, playlistURL, b.headers)
+		body, base, err := fetchHLSPlaylist(ctx, client, playlistURL, liveHeadersFor(b.headers, b.sourceURL, playlistURL))
 		if err != nil {
 			return "", false
 		}
@@ -797,9 +861,17 @@ func (m *HLSManager) ensureLiveBacklogSegment(ctx context.Context, session *HLSS
 	backlog := session.liveBacklog
 	outputDir := session.OutputDir
 	stopped := session.Stopped
+	windowStart := -1
+	if len(session.livePlaylistWindow) > 0 {
+		windowStart = session.livePlaylistWindow[0].MediaSequence
+	}
 	session.mu.RUnlock()
 	if backlog == nil || n < 0 || n >= len(backlog.segments) {
 		return nil
+	}
+	// An entry that has left the playlist (or is about to: the source drops it) is not made.
+	if n < windowStart || (!backlog.segments[n].Expires.IsZero() && !time.Now().Before(backlog.segments[n].Expires)) {
+		return errLiveBacklogGone
 	}
 	target := filepath.Join(outputDir, fmt.Sprintf("segment%d.ts", n))
 	if _, err := os.Stat(target); err == nil {
@@ -966,7 +1038,7 @@ func (m *HLSManager) runLiveBacklogJob(session *HLSSession, backlog *liveBacklog
 	if backlog.audioPacked && audioURL != "" {
 		// Packed audio: fetched here for its ID3 timestamp, handed to FFmpeg as a file with that
 		// timestamp as its offset.
-		data, start, err := fetchPackedAudio(ctx, audioURL, backlog.headers)
+		data, start, err := fetchPackedAudio(ctx, audioURL, liveHeadersFor(backlog.headers, backlog.sourceURL, audioURL))
 		if err != nil {
 			if ctx.Err() != nil {
 				job.err = stopped()
@@ -983,13 +1055,13 @@ func (m *HLSManager) runLiveBacklogJob(session *HLSSession, backlog *liveBacklog
 		defer os.Remove(audioFile)
 		audioInput = liveBacklogAudioInput{URL: audioFile, File: true, Offset: start}
 	}
-	args := liveBacklogMuxArgsFor(videoURL, audioInput, backlog.headers, audio, tmp)
+	args := liveBacklogMuxArgsFor(videoURL, audioInput, backlog.headers, backlog.sourceURL, audio, tmp)
 	out, err := exec.CommandContext(ctx, m.ffmpegPath, args...).CombinedOutput()
 	if err != nil && ctx.Err() == nil {
 		// An older segment may carry other audio streams than the newest one the choice was made
 		// from (a programme with fewer tracks): FFmpeg's own pick, encoded, as the live encode does.
 		_ = os.Remove(tmp)
-		args = liveBacklogMuxArgsFor(videoURL, audioInput, backlog.headers, liveBacklogAudio{decided: true, stream: liveBacklogAutoAudio}, tmp)
+		args = liveBacklogMuxArgsFor(videoURL, audioInput, backlog.headers, backlog.sourceURL, liveBacklogAudio{decided: true, stream: liveBacklogAutoAudio}, tmp)
 		out, err = exec.CommandContext(ctx, m.ffmpegPath, args...).CombinedOutput()
 	}
 	if err != nil {
@@ -1036,7 +1108,7 @@ func (m *HLSManager) liveBacklogAudio(ctx context.Context, backlog *liveBacklog,
 	if audioURL != "" {
 		audioInput = audioURL
 	}
-	streams, err := m.probeLiveBacklogStreams(ctx, backlog.headers, audioInput)
+	streams, err := m.probeLiveBacklogStreams(ctx, liveHeadersFor(backlog.headers, backlog.sourceURL, audioInput), audioInput)
 	if err != nil {
 		return liveBacklogAudio{}, err
 	}
@@ -1058,7 +1130,7 @@ func (m *HLSManager) liveBacklogAudio(ctx context.Context, backlog *liveBacklog,
 	if audioURL != "" && best >= 0 {
 		if backlog.audioPacked {
 			// Packed audio's timeline is its ID3 timestamp, which ffprobe does not read.
-			_, start, err := fetchPackedAudio(ctx, audioURL, backlog.headers)
+			_, start, err := fetchPackedAudio(ctx, audioURL, liveHeadersFor(backlog.headers, backlog.sourceURL, audioURL))
 			if errors.Is(err, errPackedAudioNoTimestamp) {
 				return liveBacklogAudio{}, fmt.Errorf("%w (%v)", errLiveBacklogMisaligned, err)
 			}
@@ -1067,7 +1139,7 @@ func (m *HLSManager) liveBacklogAudio(ctx context.Context, backlog *liveBacklog,
 			}
 			audioStart = start
 		}
-		videoStreams, err := m.probeLiveBacklogStreams(ctx, backlog.headers, videoURL)
+		videoStreams, err := m.probeLiveBacklogStreams(ctx, liveHeadersFor(backlog.headers, backlog.sourceURL, videoURL), videoURL)
 		if err != nil {
 			return liveBacklogAudio{}, err
 		}
@@ -1146,7 +1218,7 @@ func (m *HLSManager) prefetchLiveBacklog(session *HLSSession, n int) {
 // liveBacklogMuxArgs mux one source segment (and its separate audio segment) into an MPEG-TS
 // segment keeping the source timestamps, with the audio stream the live encode takes.
 func liveBacklogMuxArgs(videoURL, audioURL string, headers map[string]string, audio liveBacklogAudio, output string) []string {
-	return liveBacklogMuxArgsFor(videoURL, liveBacklogAudioInput{URL: audioURL}, headers, audio, output)
+	return liveBacklogMuxArgsFor(videoURL, liveBacklogAudioInput{URL: audioURL}, headers, videoURL, audio, output)
 }
 
 // liveBacklogAudioInput is a backlog segment's separate audio: a URL, or a local file of packed
@@ -1157,11 +1229,11 @@ type liveBacklogAudioInput struct {
 	Offset float64
 }
 
-func liveBacklogMuxArgsFor(videoURL string, audioIn liveBacklogAudioInput, headers map[string]string, audio liveBacklogAudio, output string) []string {
+func liveBacklogMuxArgsFor(videoURL string, audioIn liveBacklogAudioInput, headers map[string]string, channelURL string, audio liveBacklogAudio, output string) []string {
 	input := func(uri string) []string {
 		// Input options apply to the next -i only.
 		args := []string{"-protocol_whitelist", liveBacklogProtocols, "-rw_timeout", liveBacklogReadTimeout, "-user_agent", liveStreamUserAgent}
-		if h := ffmpegHeadersArg(headers); h != "" {
+		if h := ffmpegHeadersArg(liveHeadersFor(headers, channelURL, uri)); h != "" {
 			args = append(args, "-headers", h)
 		}
 		return append(args, "-i", uri)

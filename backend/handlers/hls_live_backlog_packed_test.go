@@ -98,7 +98,7 @@ func TestSegmentKindFromHead(t *testing.T) {
 
 func TestLiveBacklogMuxArgsPackedAudio(t *testing.T) {
 	args := strings.Join(liveBacklogMuxArgsFor("https://cdn/v1.ts", liveBacklogAudioInput{URL: "/out/segment1.ts.7.audio", File: true, Offset: 79309.290089},
-		map[string]string{"Referer": "https://tv"}, liveBacklogAudio{decided: true, copy: true}, "/out/segment1.ts.tmp"), " ")
+		map[string]string{"Referer": "https://tv"}, "https://tv/live.m3u8", liveBacklogAudio{decided: true, copy: true}, "/out/segment1.ts.tmp"), " ")
 	for _, want := range []string{
 		"-i https://cdn/v1.ts",
 		"-protocol_whitelist file -itsoffset 79309.290089 -i /out/segment1.ts.7.audio",

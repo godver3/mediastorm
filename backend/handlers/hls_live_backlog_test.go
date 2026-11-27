@@ -684,3 +684,60 @@ func TestStartLiveTranscodingWithoutTimeshiftBacklog(t *testing.T) {
 		<-done
 	}
 }
+
+// A restart whose first run wrote no live segment starts after the backlog again, instead of at
+// the live edge with a silent gap.
+func TestLiveBacklogRestartStartIndex(t *testing.T) {
+	srv := backlogTestSource(t, false)
+	m := &HLSManager{}
+	session := &HLSSession{ID: "restart", IsLive: true, OutputDir: t.TempDir(), LiveTuning: LiveTuningSettings{TimeshiftWindow: time.Minute}}
+	b, _ := m.prepareLiveBacklog(context.Background(), session, srv.URL+"/master.m3u8", srv.URL+"/master.m3u8", nil)
+	if b != 30 {
+		t.Fatalf("backlog = %d segments", b)
+	}
+	if got := m.liveBacklogRestartStartIndex(context.Background(), session, b); got != -3 {
+		t.Errorf("restart before any live segment: live_start_index %d, want -3", got)
+	}
+	if err := os.WriteFile(filepath.Join(session.OutputDir, "segment30.ts"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.liveBacklogRestartStartIndex(context.Background(), session, 31); got != 0 {
+		t.Errorf("restart after live segments: live_start_index %d, want 0", got)
+	}
+}
+
+// A backlog segment that has left the playlist, or that the source has dropped, is not made.
+func TestEnsureLiveBacklogSegmentRefusesGoneEntries(t *testing.T) {
+	session := &HLSSession{ID: "gone", IsLive: true, OutputDir: t.TempDir()}
+	segments := make([]liveBacklogSegment, 5)
+	for i := range segments {
+		segments[i].Expires = time.Now().Add(time.Hour)
+	}
+	segments[3].Expires = time.Now().Add(-time.Second)
+	session.liveBacklog = newLiveBacklog(segments, "", "", "", nil)
+	defer session.stopLiveBacklog()
+	session.livePlaylistWindow = []livePlaylistEntry{{MediaSequence: 2}, {MediaSequence: 3}, {MediaSequence: 4}}
+	m := &HLSManager{}
+	for _, n := range []int{1, 3} {
+		if err := m.ensureLiveBacklogSegment(context.Background(), session, n, false); !errors.Is(err, errLiveBacklogGone) {
+			t.Errorf("segment %d: %v, want errLiveBacklogGone", n, err)
+		}
+	}
+}
+
+// Credentials go only to the channel's host; other headers go everywhere.
+func TestLiveHeadersFor(t *testing.T) {
+	headers := map[string]string{"Authorization": "Bearer x", "cookie": "a=b", "Referer": "https://tv"}
+	if got := liveHeadersFor(headers, "https://tv.example/live.m3u8", "https://TV.example:443/seg1.ts"); len(got) != 3 {
+		t.Errorf("same host: %v", got)
+	}
+	got := liveHeadersFor(headers, "https://tv.example/live.m3u8", "https://cdn.example/seg1.ts")
+	if len(got) != 1 || got["Referer"] != "https://tv" {
+		t.Errorf("other host: %v", got)
+	}
+	args := strings.Join(liveBacklogMuxArgsFor("https://cdn.example/v1.ts", liveBacklogAudioInput{URL: "https://tv.example/a1.ts"}, headers,
+		"https://tv.example/live.m3u8", liveBacklogAudio{decided: true, copy: true}, "o.ts"), "\n")
+	if strings.Count(args, "Authorization") != 1 {
+		t.Errorf("mux sends credentials to the CDN: %s", args)
+	}
+}
