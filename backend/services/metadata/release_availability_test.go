@@ -25,7 +25,7 @@ func TestFinalizeSearchReleaseStatusesHydratesCachedWindowsWithoutUpstream(t *te
 	}
 	homeDate := time.Now().AddDate(0, 0, -10).Format("2006-01-02")
 	theatricalDate := time.Now().AddDate(0, -2, 0).Format("2006-01-02")
-	cacheID := cacheKey("tmdb", "movie", "releases", "v2", strconv.FormatInt(42, 10))
+	cacheID := cacheKey("tmdb", "movie", "releases", "v3", strconv.FormatInt(42, 10))
 	if err := cache.set(cacheID, cachedReleasesWithCert{
 		Releases: []models.Release{
 			{Type: "theatrical", Date: theatricalDate},

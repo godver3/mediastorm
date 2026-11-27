@@ -2343,7 +2343,7 @@ func (c *tmdbClient) movieDetailsFetch(ctx context.Context, tmdbID int64) (*mode
 
 	if movie.ReleaseDates != nil && c.cache != nil {
 		release := parseTMDBMovieReleases(*movie.ReleaseDates)
-		_ = c.cache.set(cacheKey("tmdb", "movie", "releases", "v2", strconv.FormatInt(tmdbID, 10)), cachedReleasesWithCert{Releases: release.Releases, Certification: release.Certification})
+		_ = c.cache.set(cacheKey("tmdb", "movie", "releases", "v3", strconv.FormatInt(tmdbID, 10)), cachedReleasesWithCert{Releases: release.Releases, Certification: release.Certification})
 	}
 
 	title := &models.Title{
@@ -2715,11 +2715,18 @@ func parseTMDBMovieReleases(payload tmdbReleaseDatesResponse) *movieReleaseDates
 		countryCode := strings.TrimSpace(country.ISO31661)
 
 		// Extract US certification (prefer theatrical releases for rating)
-		if countryCode == "US" && usCertification == "" {
+		// A placeholder like "NR" on one release must not mask a real rating
+		// (e.g. "G") on another: kids filters can't rank "NR" and block it.
+		if countryCode == "US" && (usCertification == "" || isUnratedCertification(usCertification)) {
 			for _, entry := range country.ReleaseDates {
 				cert := strings.TrimSpace(entry.Certification)
-				if cert != "" {
+				if cert == "" {
+					continue
+				}
+				if usCertification == "" || (isUnratedCertification(usCertification) && !isUnratedCertification(cert)) {
 					usCertification = cert
+				}
+				if !isUnratedCertification(usCertification) {
 					break
 				}
 			}
@@ -5025,4 +5032,13 @@ func tmdbOriginalLanguageMatches(value, want string) bool {
 	value = strings.ToLower(strings.TrimSpace(value))
 	want = strings.ToLower(strings.TrimSpace(want))
 	return value != "" && want != "" && value == want
+}
+
+// isUnratedCertification reports placeholder certifications that carry no rating.
+func isUnratedCertification(cert string) bool {
+	switch strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(cert), "-", "")) {
+	case "NR", "UR", "UNRATED", "NOTRATED":
+		return true
+	}
+	return false
 }

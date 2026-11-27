@@ -602,7 +602,7 @@ func TestGetMovieDetailsFromTMDBHydratesLogoOnFreshResponse(t *testing.T) {
 	}
 	const tmdbID int64 = 4512
 	if err := cache.set(
-		cacheKey("tmdb", "movie", "releases", "v2", strconv.FormatInt(tmdbID, 10)),
+		cacheKey("tmdb", "movie", "releases", "v3", strconv.FormatInt(tmdbID, 10)),
 		cachedReleasesWithCert{},
 	); err != nil {
 		t.Fatalf("seed releases cache: %v", err)
@@ -1011,7 +1011,7 @@ func TestResolveIMDBIDFallsBackToTMDBExternalID(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed TVDB search cache: %v", err)
 	}
-	if err := cache.set(cacheKey("metadata", "search", "v6", "series", "Captain Star", "eng", "adult-blocked"), []models.SearchResult{
+	if err := cache.set(cacheKey("metadata", "search", "v7", "series", "Captain Star", "eng", "adult-blocked"), []models.SearchResult{
 		{Title: models.Title{Name: "Captain Star", Year: 1997, MediaType: "series", TMDBID: 196}},
 	}); err != nil {
 		t.Fatalf("seed metadata search cache: %v", err)
@@ -3245,7 +3245,7 @@ func TestBatchMovieReleasesUsesV2ReleaseCache(t *testing.T) {
 	}
 
 	tmdbID := int64(12345)
-	cacheID := cacheKey("tmdb", "movie", "releases", "v2", "12345")
+	cacheID := cacheKey("tmdb", "movie", "releases", "v3", "12345")
 	cached := cachedReleasesWithCert{
 		Releases: []models.Release{
 			{Type: "theatrical", Date: "2026-01-10", Country: "US", Released: true},

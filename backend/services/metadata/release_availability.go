@@ -65,7 +65,7 @@ func (s *Service) hydrateCachedMovieReleaseWindows(titles []*models.Title) {
 		if len(title.Releases) > 0 || title.Theatrical != nil || title.HomeRelease != nil {
 			continue
 		}
-		cacheID := cacheKey("tmdb", "movie", "releases", "v2", strconv.FormatInt(title.TMDBID, 10))
+		cacheID := cacheKey("tmdb", "movie", "releases", "v3", strconv.FormatInt(title.TMDBID, 10))
 		var cached cachedReleasesWithCert
 		ok, _ := s.cache.get(cacheID, &cached)
 		if !ok {

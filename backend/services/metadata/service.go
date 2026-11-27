@@ -3029,7 +3029,7 @@ func (s *Service) Search(ctx context.Context, query string, mediaType string) ([
 	if allowAdultSearch {
 		adultPolicy = "adult-allowed"
 	}
-	key := cacheKey("metadata", "search", "v6", mediaType, q, s.client.language, adultPolicy)
+	key := cacheKey("metadata", "search", "v7", mediaType, q, s.client.language, adultPolicy)
 	var cached []models.SearchResult
 	if ok, _ := s.cache.get(key, &cached); ok {
 		valid := false
@@ -6516,7 +6516,7 @@ func (s *Service) BatchMovieReleases(ctx context.Context, queries []models.Batch
 		}
 
 		// Check the same cache written by enrichMovieReleases.
-		cacheID := cacheKey("tmdb", "movie", "releases", "v2", strconv.FormatInt(tmdbID, 10))
+		cacheID := cacheKey("tmdb", "movie", "releases", "v3", strconv.FormatInt(tmdbID, 10))
 		var cached cachedReleasesWithCert
 		if ok, _ := s.cache.get(cacheID, &cached); ok && len(cached.Releases) == 0 {
 			// Negative cache hit: TMDB has no release data for this movie.
@@ -7979,7 +7979,7 @@ func (s *Service) enrichMovieReleases(ctx context.Context, title *models.Title, 
 	}
 
 	// Use v2 cache key to include certification
-	cacheID := cacheKey("tmdb", "movie", "releases", "v2", strconv.FormatInt(tmdbID, 10))
+	cacheID := cacheKey("tmdb", "movie", "releases", "v3", strconv.FormatInt(tmdbID, 10))
 	var cached cachedReleasesWithCert
 	if ok, _ := s.cache.get(cacheID, &cached); ok {
 		// Negative cache hit: TMDB had no release data for this movie; don't retry.
@@ -8026,7 +8026,7 @@ func (s *Service) enrichMovieReleases(ctx context.Context, title *models.Title, 
 // releases entry) falls back to the standalone release_dates endpoint.
 func (s *Service) fetchMovieReleasesWithCert(ctx context.Context, tmdbID int64) (*movieReleaseDatesResult, error) {
 	if s.tmdb.cache != nil {
-		cacheID := cacheKey("tmdb", "movie", "releases", "v2", strconv.FormatInt(tmdbID, 10))
+		cacheID := cacheKey("tmdb", "movie", "releases", "v3", strconv.FormatInt(tmdbID, 10))
 		if _, err := s.tmdb.movieDetails(ctx, tmdbID); err == nil {
 			var cached cachedReleasesWithCert
 			if ok, _ := s.tmdb.cache.get(cacheID, &cached); ok {

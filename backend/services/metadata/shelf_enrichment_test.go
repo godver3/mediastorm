@@ -238,7 +238,7 @@ func TestMovieReleasesMissUsesMovieDetails(t *testing.T) {
 
 func TestBatchMovieReleasesHonoursNegativeCache(t *testing.T) {
 	svc, counts := shelfTestService(t)
-	_ = svc.cache.set(cacheKey("tmdb", "movie", "releases", "v2", "32"), cachedReleasesWithCert{})
+	_ = svc.cache.set(cacheKey("tmdb", "movie", "releases", "v3", "32"), cachedReleasesWithCert{})
 	results := svc.BatchMovieReleases(context.Background(), []models.BatchMovieReleasesQuery{{TMDBID: 32}})
 	if len(counts()) != 0 || results[0].Status != models.MovieReleaseStatusUnknown {
 		t.Fatalf("negative cache refetched: %v %+v", counts(), results)
