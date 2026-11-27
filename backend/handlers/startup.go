@@ -418,6 +418,9 @@ func (h *StartupHandler) GetStartup(w http.ResponseWriter, r *http.Request) {
 				startupShelfLimit,
 			)
 			resp.CalendarItems = h.filterHiddenCalendarItems(userID, resp.CalendarItems)
+			if h.usersProvider != nil {
+				resp.CalendarItems = filterKidsCalendarItems(h.usersProvider, userID, resp.CalendarItems)
+			}
 		}()
 	}
 

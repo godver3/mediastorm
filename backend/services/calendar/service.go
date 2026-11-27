@@ -1571,6 +1571,9 @@ func enrichCalendarItemFromTitle(item *models.CalendarItem, title *models.Title)
 	}
 	item.Logo = title.Logo
 	item.Ratings = title.Ratings
+	if title.Certification != "" {
+		item.Certification = title.Certification
+	}
 	item.Genres = title.Genres
 	item.RuntimeMinutes = title.RuntimeMinutes
 	item.Theatrical = title.Theatrical

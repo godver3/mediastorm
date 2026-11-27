@@ -24,6 +24,7 @@ type CalendarItem struct {
 	Overview        string            `json:"overview,omitempty"`
 	Logo            *Image            `json:"logo,omitempty"`
 	Ratings         []Rating          `json:"ratings,omitempty"`
+	Certification   string            `json:"certification,omitempty"` // MPAA/TV content rating, used for kids-profile filtering
 	Genres          []string          `json:"genres,omitempty"`
 	RuntimeMinutes  int               `json:"runtimeMinutes,omitempty"`
 	Theatrical      *Release          `json:"theatricalRelease,omitempty"`

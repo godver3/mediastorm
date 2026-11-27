@@ -131,6 +131,27 @@ func FilterTitlesByRatings(titles []models.Title, maxMovieRating, maxTVRating st
 	return result
 }
 
+// FilterCalendarByRatings filters calendar items using separate max ratings for
+// movies and TV shows. Items without a certification or exceeding the max for
+// their media type are removed.
+func FilterCalendarByRatings(items []models.CalendarItem, maxMovieRating, maxTVRating string) []models.CalendarItem {
+	if strings.TrimSpace(maxMovieRating) == "" && strings.TrimSpace(maxTVRating) == "" {
+		return items
+	}
+
+	result := make([]models.CalendarItem, 0, len(items))
+	for _, item := range items {
+		maxRating := maxTVRating
+		if strings.ToLower(item.MediaType) == "movie" {
+			maxRating = maxMovieRating
+		}
+		if strings.TrimSpace(maxRating) == "" || IsRatingAllowed(item.Certification, maxRating, item.MediaType) {
+			result = append(result, item)
+		}
+	}
+	return result
+}
+
 // FilterTitlesByRating filters a list of Titles by rating.
 func FilterTitlesByRating(titles []models.Title, maxRating string) []models.Title {
 	if strings.TrimSpace(maxRating) == "" {

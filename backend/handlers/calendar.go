@@ -156,6 +156,9 @@ func (h *CalendarHandler) GetCalendar(w http.ResponseWriter, r *http.Request) {
 		return result[i].AirTime < result[j].AirTime
 	})
 
+	if lookup, ok := h.Users.(kidsUserLookup); ok {
+		result = filterKidsCalendarItems(lookup, userID, result)
+	}
 	if result == nil {
 		result = []models.CalendarItem{}
 	}
