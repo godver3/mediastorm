@@ -252,8 +252,9 @@ through their server as before.
 - **JSON**: a preset exported from mediastorm, a TRaSH profile together with
   its custom formats, or a list of custom formats.
 
-**Use it right away** (on by default) makes the new preset the server's
-preset for its media type, or its anime slot for an anime-only preset;
+**Make default for Movies/Series** (on by default) makes the new preset the
+server's preset for its media type, or its anime slot for an anime-only
+preset (the checkbox names the slot);
 **Offer it in version pickers** adds it to the pickers. Formats the profile
 uses that the snapshot lacks are reported after the import. The first
 TRaSH or Sonarr/Radarr import adds the hourly *Quality preset updates*

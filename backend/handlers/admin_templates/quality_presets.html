@@ -176,10 +176,10 @@
                 <button class="btn btn-secondary" data-tab="json" role="tab" aria-selected="false">Paste JSON</button>
             </div>
             <div class="qp-row" style="margin-bottom:0.4rem;">
-                <label><input type="checkbox" id="qpImportUse" checked> Use it right away</label>
+                <label><input type="checkbox" id="qpImportUse" checked> <span id="qpImportUseLabel">Make default</span></label>
                 <label><input type="checkbox" id="qpImportOffer"> Offer it in version pickers</label>
             </div>
-            <p class="qp-muted">"Use it right away" makes the new preset the server's preset for its media type (the anime slot for anime-only presets); profiles and devices with their own choice keep it. New TRaSH and Sonarr/Radarr presets follow upstream changes automatically; change that under Sync.</p>
+            <p class="qp-muted">Profiles and devices with their own preset keep it. New TRaSH and Sonarr/Radarr presets follow upstream changes automatically; change that under Sync.</p>
             <div data-pane="trash">
                 <div class="qp-grid">
                     <label>For<br><select id="qpTrashApp" class="form-input"><option value="sonarr">Series (Sonarr)</option><option value="radarr">Movies (Radarr)</option></select></label>
@@ -782,6 +782,35 @@ function tabs(containerId, attr) {
     });
 }
 tabs('qpAddTabs', 'data-pane');
+// The import's "Make default for …" names the slot the new preset takes: movies or series,
+// the anime one for an anime profile (as the server decides from the profile name).
+function updateImportUseLabel() {
+    const tab = ($('qpAddTabs').querySelector('button.active') || {}).dataset?.tab || 'trash';
+    const optionText = sel => (sel.selectedOptions[0] || {}).textContent || '';
+    let app = '', name = '', anime = false;
+    if (tab === 'trash') { app = $('qpTrashApp').value; name = optionText($('qpTrashProfile')); }
+    else if (tab === 'json') ({ app, name, anime } = pastedPreset());
+    else if (state.arrApp && $('qpArrProfile').value) { app = state.arrApp; name = optionText($('qpArrProfile')); }
+    const media = app ? (anime || /anime/i.test(name) ? 'Anime ' : '') + forMedia(app) : 'Movies/Series';
+    $('qpImportUseLabel').textContent = 'Make default for ' + media;
+}
+// pastedPreset reads the pasted JSON as the server does: its own app (else the dropdown) and
+// audience (an exported preset says it; otherwise the profile name tells).
+function pastedPreset() {
+    let app = $('qpJsonApp').value, name = '', anime = false;
+    let doc = null;
+    try { doc = JSON.parse($('qpJsonBody').value); } catch (e) { /* not (yet) JSON: the dropdown */ }
+    if (doc && typeof doc === 'object' && !Array.isArray(doc)) {
+        if (doc.app === 'radarr' || doc.app === 'sonarr') app = doc.app;
+        if (['', 'anime', 'non-anime'].includes(doc.audience)) anime = doc.audience === 'anime';
+        else name = doc.name || (doc.upstream && doc.upstream.profile && doc.upstream.profile.name) || (doc.profile && doc.profile.name) || '';
+    }
+    return { app, name, anime };
+}
+$('qpAddTabs').addEventListener('click', () => setTimeout(updateImportUseLabel));
+$('qpJsonBody').addEventListener('input', updateImportUseLabel);
+['qpTrashApp', 'qpTrashProfile', 'qpArrProfile', 'qpJsonApp'].forEach(id => $(id).addEventListener('change', updateImportUseLabel));
+updateImportUseLabel();
 tabs('qpDetailTabs', 'data-dpane');
 
 async function loadCatalog() {
@@ -800,6 +829,7 @@ function renderCatalog() {
     for (const p of profiles) (groups[p.group || 'Other'] = groups[p.group || 'Other'] || []).push(p);
     $('qpTrashProfile').innerHTML = Object.keys(groups).map(g => `<optgroup label="${esc(g)}">${groups[g].map(p => `<option value="${esc(p.trashId)}">${esc(p.name)}</option>`).join('')}</optgroup>`).join('');
     renderCatalogProfile();
+    updateImportUseLabel();
 }
 function renderCatalogProfile() {
     const app = $('qpTrashApp').value;
@@ -813,6 +843,7 @@ $('qpTrashProfile').addEventListener('change', renderCatalogProfile);
 // afterImport puts a new preset to use as the import options ask, then
 // opens it.
 async function afterImport(d, note) {
+    updateImportUseLabel(); // the pasted JSON may have been cleared
     const p = d.preset;
     const body = {};
     if ($('qpImportUse').checked) {
@@ -842,7 +873,9 @@ $('qpTrashImport').addEventListener('click', ev => busy(ev.currentTarget, async 
 $('qpArrLoad').addEventListener('click', ev => busy(ev.currentTarget, async () => {
     const r = await run(() => api('/import/arr/profiles', { method: 'POST', body: { url: $('qpArrUrl').value.trim(), apiKey: $('qpArrKey').value.trim() } }));
     if (!r) return;
+    state.arrApp = r.app;
     $('qpArrProfile').innerHTML = (r.profiles || []).map(p => `<option value="${p.id}">${esc(p.name)} (${forMedia(r.app)})</option>`).join('') || '<option value="">No profiles</option>';
+    updateImportUseLabel();
 }));
 $('qpArrImport').addEventListener('click', ev => busy(ev.currentTarget, async () => {
     const body = { url: $('qpArrUrl').value.trim(), apiKey: $('qpArrKey').value.trim(), profileId: Number($('qpArrProfile').value), name: $('qpArrName').value.trim() };
