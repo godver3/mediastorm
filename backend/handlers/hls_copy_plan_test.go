@@ -162,3 +162,72 @@ func TestForcedCopyWhenTranscodingDisabled(t *testing.T) {
 		t.Fatal("transcoding disabled without caps")
 	}
 }
+
+// A stable copy session converts AAC only beyond the channels the client declared: the web
+// player declares two, so a broadcast's stereo AAC is copied and 5.1 AAC becomes stereo.
+func TestStableCopyAudioNeedsAAC(t *testing.T) {
+	web := &HLSSession{ClientCaps: &HLSClientCaps{TSAudio: []string{"aac", "mp3"}, MaxAudioChannels: 2, WebFallback: true}}
+	for _, tc := range []struct {
+		stream audioStreamInfo
+		want   bool
+	}{
+		{audioStreamInfo{Codec: "aac", Channels: 2}, false},
+		{audioStreamInfo{Codec: "aac", Channels: 1}, false},
+		{audioStreamInfo{Codec: "aac", Channels: 6}, true},
+		{audioStreamInfo{Codec: "aac"}, true}, // unknown count with a limit
+		{audioStreamInfo{Codec: "mp3", Channels: 2}, false},
+		{audioStreamInfo{Codec: "ac3", Channels: 6}, true},
+	} {
+		if got := stableCopyAudioNeedsAAC(tc.stream, web); got != tc.want {
+			t.Errorf("web %+v: %v, want %v", tc.stream, got, tc.want)
+		}
+	}
+	// No declared limit (as before): AAC is copied whatever its channels.
+	noLimit := &HLSSession{ClientCaps: &HLSClientCaps{TSAudio: []string{"aac"}}}
+	if stableCopyAudioNeedsAAC(audioStreamInfo{Codec: "aac", Channels: 6}, noLimit) {
+		t.Error("AAC converted without a declared channel limit")
+	}
+	// Other clients (the Jellyfin bridge) keep AAC copied whatever channels they declared.
+	bridge := &HLSSession{ClientCaps: &HLSClientCaps{TSAudio: []string{"aac"}, MaxAudioChannels: 2}}
+	if stableCopyAudioNeedsAAC(audioStreamInfo{Codec: "aac", Channels: 6}, bridge) || stableCopyAudioNeedsAAC(audioStreamInfo{Codec: "aac"}, bridge) {
+		t.Error("AAC converted for a non-web-player client")
+	}
+	// Audio transcoding disabled keeps everything.
+	forced := &HLSSession{ClientCaps: &HLSClientCaps{ForceAudioCopy: true, MaxAudioChannels: 2}}
+	if stableCopyAudioNeedsAAC(audioStreamInfo{Codec: "aac", Channels: 6}, forced) {
+		t.Error("AAC converted although audio transcoding is disabled")
+	}
+}
+
+// TestMappedAudioStream: the audio check looks at the stream FFmpeg is given, also when no
+// track is selected and TrueHD comes first.
+func TestMappedAudioStream(t *testing.T) {
+	streams := []audioStreamInfo{
+		{Index: 1, Codec: "truehd"},
+		{Index: 2, Codec: "ac3", Title: "Director's Commentary"},
+		{Index: 3, Codec: "eac3"},
+	}
+	for _, tc := range []struct {
+		name                 string
+		track                int
+		hasTrueHD, hasCompat bool
+		want                 int
+	}{
+		{"selected", 2, true, true, 2},
+		{"TrueHD first: the first compatible non-commentary track", -1, true, true, 3},
+		{"selected track missing", 9, true, true, 3},
+		{"no TrueHD: the first stream", -1, false, true, 1},
+	} {
+		got, ok := mappedAudioStream(streams, tc.track, tc.hasTrueHD, tc.hasCompat)
+		if !ok || got.Index != tc.want {
+			t.Errorf("%s: %d %v, want %d", tc.name, got.Index, ok, tc.want)
+		}
+	}
+	onlyCommentary := []audioStreamInfo{{Index: 1, Codec: "truehd"}, {Index: 2, Codec: "aac", Title: "Commentary"}}
+	if got, ok := mappedAudioStream(onlyCommentary, -1, true, true); !ok || got.Index != 2 {
+		t.Errorf("commentary fallback: %d %v", got.Index, ok)
+	}
+	if _, ok := mappedAudioStream(nil, -1, false, false); ok {
+		t.Error("no streams")
+	}
+}

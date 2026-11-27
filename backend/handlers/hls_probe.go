@@ -26,6 +26,7 @@ type audioStreamInfo struct {
 	Profile  string
 	Language string
 	Title    string
+	Channels int // 0 when unknown
 }
 
 // subtitleStreamInfo holds metadata for a subtitle stream
@@ -308,6 +309,7 @@ func (m *HLSManager) parseUnifiedProbeOutput(output []byte) (*UnifiedProbeResult
 			CodecName     string            `json:"codec_name"`
 			PixFmt        string            `json:"pix_fmt"`
 			Profile       string            `json:"profile"`
+			Channels      int               `json:"channels"`
 			Width         int               `json:"width"`
 			Height        int               `json:"height"`
 			Level         int               `json:"level"`
@@ -438,6 +440,7 @@ func (m *HLSManager) parseUnifiedProbeOutput(output []byte) (*UnifiedProbeResult
 				Profile:  strings.TrimSpace(stream.Profile),
 				Language: lang,
 				Title:    title,
+				Channels: stream.Channels,
 			})
 			if IsIncompatibleAudioCodec(codec) {
 				result.HasTrueHD = true

@@ -940,13 +940,36 @@ func (s *Service) startRecording(recording models.Recording) {
 
 	attempt := 0
 	lastErrMsg := ""
+	// The streams to record (variant.go). Attempts append to one file, whose stream layout must
+	// not change: once something is recorded, a retry keeps the chosen variant.
+	var streams recordingStreamChoice
+	var recorded int64
+	emptyVariant := 0
 	for {
 		if time.Until(stopAt) <= 0 {
 			break
 		}
 		attempt++
 
-		result := s.runRecordingAttempt(ctx, recording, stopAt, attempt)
+		lookupCtx, cancelLookup := context.WithDeadline(ctx, stopAt)
+		streams = chooseRecordingStreams(lookupCtx, recording.SourceURL, streams, recorded > 0)
+		cancelLookup()
+		if time.Until(stopAt) <= 0 {
+			break
+		}
+		result := s.runRecordingAttempt(ctx, recording, stopAt, attempt, streams)
+		recorded += result.written
+		if result.mapsMatchedNothing && streams.variant != "" {
+			emptyVariant++
+			// FFmpeg found nothing in the chosen variant. Before anything is recorded: everything,
+			// as before. Afterwards the file has the variant's layout: look it up again, and give up
+			// on it only when it keeps coming out empty.
+			if recorded == 0 || emptyVariant >= 2 {
+				streams = recordingStreamChoice{maps: recordingAllStreams, final: true}
+			}
+		} else {
+			emptyVariant = 0
+		}
 		finishedAt := time.Now().UTC()
 		if ctx.Err() != nil {
 			s.handleInterruptedRecording(recording.ID, finishedAt)
@@ -1058,13 +1081,15 @@ type recordingAttemptResult struct {
 	written           int64
 	err               error
 	errMsg            string
+	// mapsMatchedNothing: FFmpeg found no stream for the -map arguments.
+	mapsMatchedNothing bool
 }
 
 // runRecordingAttempt captures the source until stopAt (wall clock) or until
 // ffmpeg exits on its own. The stop time is enforced by the recorder rather
 // than ffmpeg's -t, which counts stream timestamps: live sources with forward
 // timestamp jumps made -t end captures minutes early.
-func (s *Service) runRecordingAttempt(ctx context.Context, recording models.Recording, stopAt time.Time, attempt int) recordingAttemptResult {
+func (s *Service) runRecordingAttempt(ctx context.Context, recording models.Recording, stopAt time.Time, attempt int, streams recordingStreamChoice) recordingAttemptResult {
 	startedAt := time.Now()
 	flags := os.O_CREATE | os.O_WRONLY
 	if attempt == 1 {
@@ -1092,13 +1117,20 @@ func (s *Service) runRecordingAttempt(ctx context.Context, recording models.Reco
 		"-reconnect", "1",
 		"-reconnect_streamed", "1",
 		"-reconnect_delay_max", "3",
-		"-i", recording.SourceURL,
-		"-map", "0",
+	}
+	// An adaptive HLS channel: only its best variant with its own audio tracks (variant.go), read
+	// with the User-Agent the variant was chosen with.
+	if streams.variant != "" {
+		args = append(args, "-user_agent", recordingMasterUA)
+	}
+	args = append(args, "-i", recording.SourceURL)
+	args = append(args, streams.args()...)
+	args = append(args,
 		"-c", "copy",
 		"-mpegts_flags", "+resend_headers",
 		"-f", "mpegts",
 		"pipe:1",
-	}
+	)
 	attemptCtx, cancelAttempt := context.WithDeadline(ctx, stopAt)
 	defer cancelAttempt()
 	cmd := execCommandContext(attemptCtx, s.ffmpegPath, args...)
@@ -1124,6 +1156,7 @@ func (s *Service) runRecordingAttempt(ctx context.Context, recording models.Reco
 	}
 	elapsed := time.Since(startedAt).Round(time.Second)
 	errMsg := truncateRecordingError(stderr.String())
+	mapsMatchedNothing := strings.Contains(stderr.String(), "matches no streams")
 
 	if ctx.Err() == nil && errors.Is(attemptCtx.Err(), context.DeadlineExceeded) {
 		log.Printf("[recordings] attempt reached stop time id=%s attempt=%d elapsed=%s bytes=%d",
@@ -1138,7 +1171,7 @@ func (s *Service) runRecordingAttempt(ctx context.Context, recording models.Reco
 		// last warning (often a harmless one about the source) is not why.
 		log.Printf("[recordings] attempt stopped id=%s attempt=%d elapsed=%s bytes=%d: recording cancelled or service stopping",
 			recording.ID, attempt, elapsed, written)
-		return recordingAttemptResult{err: waitErr, errMsg: errMsg, written: written}
+		return recordingAttemptResult{err: waitErr, errMsg: errMsg, written: written, mapsMatchedNothing: mapsMatchedNothing}
 	}
 	exitCode := -1
 	if cmd.ProcessState != nil {
@@ -1146,7 +1179,7 @@ func (s *Service) runRecordingAttempt(ctx context.Context, recording models.Reco
 	}
 	log.Printf("[recordings] attempt ended early id=%s attempt=%d exit=%d elapsed=%s bytes=%d remaining=%s stderr=%q",
 		recording.ID, attempt, exitCode, elapsed, written, time.Until(stopAt).Round(time.Second), errMsg)
-	return recordingAttemptResult{err: waitErr, errMsg: errMsg, written: written}
+	return recordingAttemptResult{err: waitErr, errMsg: errMsg, written: written, mapsMatchedNothing: mapsMatchedNothing}
 }
 
 // redactSourceURL keeps only scheme and host: IPTV source URLs often carry

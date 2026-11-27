@@ -551,3 +551,63 @@ func TestHoldGrowingCopyTailBatchesLiveEdgeRestarts(t *testing.T) {
 		}
 	}
 }
+
+// A running recording the web player cannot get a copy timeline for (here: it refused the copy)
+// follows the file as a web session, which converts the recording's AC-3 to stereo AAC in MPEG-TS
+// although /watch no longer asks for forceAAC.
+func TestGrowingWebFallbackConvertsAudio(t *testing.T) {
+	if os.Getenv("MEDIASTORM_FFMPEG_E2E") != "1" {
+		t.Skip("set MEDIASTORM_FFMPEG_E2E=1 to run against ffmpeg")
+	}
+	dir := t.TempDir()
+	full := filepath.Join(dir, "full.ts")
+	gen := exec.Command("ffmpeg", "-nostdin", "-loglevel", "error",
+		"-f", "lavfi", "-i", "testsrc2=size=640x360:rate=25",
+		"-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000",
+		"-t", "60", "-map", "0:v", "-map", "1:a",
+		"-c:v", "libx264", "-preset", "ultrafast", "-g", "50",
+		"-c:a", "ac3", "-ac", "6", "-f", "mpegts", full)
+	if out, err := gen.CombinedOutput(); err != nil {
+		t.Fatalf("generate source: %v %s", err, out)
+	}
+	data, err := os.ReadFile(full)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := filepath.Join(dir, "Sender - 2026-11-25 2015 - Film.ts")
+	appendFile(t, rec, data[:len(data)/2/188*188])
+	provider := &growingFileProvider{path: rec}
+	provider.growing.Store(true)
+	m := NewHLSManager(filepath.Join(dir, "hls"), "ffmpeg", "ffprobe", provider)
+	t.Cleanup(m.Shutdown)
+	caps := &HLSClientCaps{TSVideo: []string{"h264"}, TSAudio: []string{"aac", "mp3"}, FMP4Video: []string{"h264"}, FMP4Audio: []string{"aac"}, MaxAudioChannels: 2, WebFallback: true, NoVideoCopy: true}
+	path := "recording:rec-1/" + filepath.Base(rec)
+	session, err := m.CreateSession(withHLSClientCaps(context.Background(), caps), path, path, false, "", false, false, 0, 0, -1, -1, "p", "p", "127.0.0.1", false, "", "web-stable", 0, "")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	defer m.CleanupSession(session.ID)
+	if session.usesStableCopyTimeline() {
+		t.Fatal("a refused copy still got a copy timeline")
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	var segment string
+	for segment == "" {
+		for _, name := range []string{"segment0.ts", "segment0.m4s"} {
+			if _, err := os.Stat(filepath.Join(session.OutputDir, name)); err == nil {
+				segment = name
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("no first segment")
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if segment != "segment0.ts" {
+		t.Fatalf("growing fallback segments are %s, want MPEG-TS", segment)
+	}
+	out, err := exec.Command("ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=codec_name,channels", "-of", "csv=p=0", filepath.Join(session.OutputDir, segment)).Output()
+	if err != nil || !strings.Contains(string(out), "aac,2") {
+		t.Fatalf("growing fallback audio: %q %v, want stereo AAC", out, err)
+	}
+}

@@ -1,5 +1,7 @@
 package models
 
+import "strings"
+
 // AudioStreamInfo contains audio stream metadata used during playback preparation.
 type AudioStreamInfo struct {
 	Index    int
@@ -7,6 +9,7 @@ type AudioStreamInfo struct {
 	Profile  string
 	Language string
 	Title    string
+	Channels int // 0 when unknown
 }
 
 // SubtitleStreamInfo contains subtitle stream metadata used during playback preparation.
@@ -17,6 +20,18 @@ type SubtitleStreamInfo struct {
 	Title     string
 	IsForced  bool
 	IsDefault bool
+}
+
+// IsInterlacedFieldOrder reports whether ffprobe's field_order describes an interlaced
+// picture (tt, bb, tb, bt); "progressive", "unknown" and an empty value do not. Jellyfin sets
+// MediaStream.IsInterlaced from the same field (it counts anything but "progressive", but
+// ffprobe's JSON leaves "unknown" out).
+func IsInterlacedFieldOrder(fieldOrder string) bool {
+	switch strings.ToLower(strings.TrimSpace(fieldOrder)) {
+	case "tt", "bb", "tb", "bt":
+		return true
+	}
+	return false
 }
 
 // VideoFullResult contains the reusable result of a full playback metadata probe.

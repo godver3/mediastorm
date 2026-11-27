@@ -78,6 +78,10 @@ type LocalMediaProbe struct {
 	SubtitleCodecs  []string `json:"subtitleCodecs,omitempty"`
 	AudioStreams    int      `json:"audioStreams,omitempty"`
 	SubtitleStreams int      `json:"subtitleStreams,omitempty"`
+	Interlaced      bool     `json:"interlaced,omitempty"` // interlaced video (1080i, 576i)
+	// Version is the probe generation (localmedia.localMediaProbeVersion): an older probe of an
+	// unchanged file is redone on the next scan to fill fields added since.
+	Version int `json:"version,omitempty"`
 }
 
 type LocalMediaExternalIDs struct {

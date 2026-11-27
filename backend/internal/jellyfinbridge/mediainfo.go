@@ -39,6 +39,7 @@ type mediaProbe struct {
 		ColorSpace     string `json:"colorSpace"`
 		HasDolbyVision bool   `json:"hasDolbyVision"`
 		DVProfile      string `json:"dolbyVisionProfile"`
+		Interlaced     bool   `json:"interlaced"`
 	} `json:"videoStreams"`
 	AudioStreams []struct {
 		Index         int    `json:"index"`
@@ -179,7 +180,8 @@ func applyProbe(streams []dto.MediaStream, m *mediaProbe) {
 			if depth := pixFmtBitDepth(v.PixFmt); depth > 0 {
 				st.BitDepth = intPtr(depth)
 			}
-			st.DisplayTitle = videoDisplayTitle(v.Width, v.Height, st.Codec, st.VideoRangeType)
+			st.IsInterlaced = v.Interlaced
+			st.DisplayTitle = videoDisplayTitle(v.Width, v.Height, v.Interlaced, st.Codec, st.VideoRangeType)
 		case "Audio":
 			for _, a := range m.AudioStreams {
 				if a.Index != st.Index {
@@ -239,19 +241,23 @@ func pixFmtBitDepth(pixFmt string) int {
 }
 
 // videoDisplayTitle mirrors Jellyfin's "1080p H264 SDR".
-func videoDisplayTitle(width, height int, codec, rangeType string) string {
+func videoDisplayTitle(width, height int, interlaced bool, codec, rangeType string) string {
 	parts := []string{}
+	scan := "p"
+	if interlaced {
+		scan = "i" // 1080i, 576i: as Jellyfin labels interlaced video
+	}
 	switch {
 	case width >= 3800 || height >= 2100:
 		parts = append(parts, "4K")
 	case width >= 2500 || height >= 1400:
-		parts = append(parts, "1440p")
+		parts = append(parts, "1440"+scan)
 	case width >= 1900 || height >= 1000:
-		parts = append(parts, "1080p")
+		parts = append(parts, "1080"+scan)
 	case width >= 1260 || height >= 700:
-		parts = append(parts, "720p")
+		parts = append(parts, "720"+scan)
 	case height > 0:
-		parts = append(parts, fmt.Sprintf("%dp", height))
+		parts = append(parts, fmt.Sprintf("%d%s", height, scan))
 	}
 	if codec != "" {
 		parts = append(parts, strings.ToUpper(codec))

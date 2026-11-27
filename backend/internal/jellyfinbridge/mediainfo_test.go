@@ -76,6 +76,47 @@ func TestPlaybackInfoCarriesProbedStreamDetails(t *testing.T) {
 	}
 }
 
+// TestApplyProbeMarksInterlacedVideo: an interlaced picture is sent as IsInterlaced and named
+// like Jellyfin names it (1080i, 576i); a progressive one keeps "p".
+func TestApplyProbeMarksInterlacedVideo(t *testing.T) {
+	probe := func(height int, interlaced bool) *mediaProbe {
+		m := &mediaProbe{}
+		m.VideoStreams = append(m.VideoStreams, struct {
+			Index          int    `json:"index"`
+			CodecName      string `json:"codecName"`
+			Width          int    `json:"width"`
+			Height         int    `json:"height"`
+			BitRate        int64  `json:"bitRate"`
+			PixFmt         string `json:"pixFmt"`
+			Profile        string `json:"profile"`
+			Level          int    `json:"level"`
+			AvgFrameRate   string `json:"avgFrameRate"`
+			ColorTransfer  string `json:"colorTransfer"`
+			ColorPrimaries string `json:"colorPrimaries"`
+			ColorSpace     string `json:"colorSpace"`
+			HasDolbyVision bool   `json:"hasDolbyVision"`
+			DVProfile      string `json:"dolbyVisionProfile"`
+			Interlaced     bool   `json:"interlaced"`
+		}{CodecName: "h264", Width: height * 16 / 9, Height: height, Interlaced: interlaced})
+		return m
+	}
+	for _, tc := range []struct {
+		height     int
+		interlaced bool
+		title      string
+	}{
+		{1080, true, "1080i H264 SDR"},
+		{576, true, "576i H264 SDR"},
+		{1080, false, "1080p H264 SDR"},
+	} {
+		streams := []dto.MediaStream{{Type: "Video", VideoRangeType: "SDR"}}
+		applyProbe(streams, probe(tc.height, tc.interlaced))
+		if streams[0].IsInterlaced != tc.interlaced || streams[0].DisplayTitle != tc.title {
+			t.Errorf("%d interlaced=%v: IsInterlaced=%v title=%q, want %q", tc.height, tc.interlaced, streams[0].IsInterlaced, streams[0].DisplayTitle, tc.title)
+		}
+	}
+}
+
 func TestParseFrameRateAndBitDepth(t *testing.T) {
 	if got := parseFrameRate("30000/1001"); got != 29.97 {
 		t.Errorf("30000/1001 = %v", got)

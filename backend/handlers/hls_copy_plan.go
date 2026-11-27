@@ -442,6 +442,22 @@ func (session *HLSSession) passesAudio(codec string) bool {
 	return containsString(session.CopyPlan.copyAudioCodecs(session.ClientCaps), codec)
 }
 
+// stableCopyAudioNeedsAAC reports whether a stable copy session converts the
+// selected audio to AAC: a codec the client does not play, or, for the /watch
+// web player, AAC with more channels than it declared (two: MSE plays
+// multichannel AAC unreliably; an unknown count counts as more). Other clients
+// (the Jellyfin bridge) keep their AAC copied, as before.
+func stableCopyAudioNeedsAAC(selected audioStreamInfo, session *HLSSession) bool {
+	if selected.Codec != "aac" {
+		return !session.passesAudio(selected.Codec)
+	}
+	caps := session.ClientCaps
+	if caps.forceAudioCopy() || !caps.webFallback() || caps.MaxAudioChannels <= 0 {
+		return false
+	}
+	return selected.Channels <= 0 || selected.Channels > caps.MaxAudioChannels
+}
+
 // audioTranscodingDisabled reports whether the session must keep its audio
 // as it is (Jellyfin bridge "Disable Audio Transcoding").
 func (session *HLSSession) audioTranscodingDisabled() bool {

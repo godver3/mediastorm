@@ -2286,7 +2286,8 @@
         tsVideo: fmp4Video.includes('h264') ? ['h264'] : [],
         tsAudio: ['aac', 'mp3'],
         fmp4Video,
-        fmp4Audio: ['aac', 'mp3'],
+        // MP3 only in MPEG-TS: Safari does not play MP3 in fMP4.
+        fmp4Audio: ['aac'],
         videoRanges,
         maxAudioChannels: 2,
         webFallback: true,
@@ -2314,7 +2315,9 @@
       const caps = playbackMeta.isLive ? null : webPlayerClientCaps();
       const params = new URLSearchParams({
         path: sourcePath,
-        forceAAC: playbackMeta.forceAAC ? 'true' : 'true',
+        // A stable copy session converts only audio the browser cannot play (and
+        // AAC beyond the declared channels); forcing AAC re-encoded AAC as well.
+        forceAAC: playbackMeta.forceAAC || !caps ? 'true' : 'false',
         target: caps ? 'web-stable' : 'web',
         profileId: activeProfileId,
         profileName: activeProfileName,
@@ -5137,7 +5140,8 @@
         dv: Boolean(status.hasDolbyVision),
         hdr10: Boolean(status.hasHdr10),
         dvProfile: status.dolbyVisionProfile || '',
-        forceAAC: true,
+        // Keep the previous episode's setting: the server forces AAC itself when it cannot copy.
+        forceAAC: Boolean(playbackMeta.forceAAC),
       };
       if (Number.isFinite(Number(status.selectedAudioTrack)) && Number(status.selectedAudioTrack) >= 0) {
         webPlayerSelectedAudioTrack = Number(status.selectedAudioTrack);
