@@ -52,3 +52,23 @@ func TestProfileSkippingHTTPIsolationAndValidation(t *testing.T) {
 		t.Fatal("profile choice leaked between profiles")
 	}
 }
+
+// The commercial preference can be patched on its own.
+func TestProfileSkippingAcceptsCommercial(t *testing.T) {
+	svc, err := user_settings.NewService(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := NewUserSettingsHandler(svc, skippingUsers{}, nil)
+	r := httptest.NewRequest(http.MethodPatch, "/", strings.NewReader(`{"commercial":true}`))
+	r = mux.SetURLVars(r, map[string]string{"userID": "adult"})
+	r = r.WithContext(context.WithValue(r.Context(), auth.ContextKeyAccountID, "household"))
+	w := httptest.NewRecorder()
+	h.PatchSkipping(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	if adult, _ := svc.Get("adult"); adult == nil || adult.Playback.CommercialAutoSkip == nil || !*adult.Playback.CommercialAutoSkip {
+		t.Fatal("commercial auto-skip not stored")
+	}
+}

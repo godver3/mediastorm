@@ -322,6 +322,9 @@ func (s *Service) GetWithDefaults(userID string, defaults models.UserSettings) (
 		if settings.Playback.RecapAutoSkip == nil {
 			settings.Playback.RecapAutoSkip = defaults.Playback.RecapAutoSkip
 		}
+		if settings.Playback.CommercialAutoSkip == nil {
+			settings.Playback.CommercialAutoSkip = defaults.Playback.CommercialAutoSkip
+		}
 		if settings.Playback.CreditsAutoSkip == nil {
 			settings.Playback.CreditsAutoSkip = defaults.Playback.CreditsAutoSkip
 		}
@@ -707,12 +710,13 @@ func (s *Service) Update(userID string, settings models.UserSettings) error {
 	// If settings are empty, delete the entry instead of saving
 	// General settings PUTs (including older clients) cannot replace sports data.
 	settings.SportsPreferences = s.settings[userID].SportsPreferences
-	// Intro and recap auto-skip change only through UpdateSkipping (PATCH
+	// Intro, recap and commercial auto-skip change only through UpdateSkipping (PATCH
 	// /settings/skipping). Clients send back the whole document they last
 	// read, often from a cache older than the latest toggle, so a full PUT
-	// must not overwrite these two values, whether it omits them or not.
+	// must not overwrite these values, whether it omits them or not.
 	settings.Playback.IntroAutoSkip = s.settings[userID].Playback.IntroAutoSkip
 	settings.Playback.RecapAutoSkip = s.settings[userID].Playback.RecapAutoSkip
+	settings.Playback.CommercialAutoSkip = s.settings[userID].Playback.CommercialAutoSkip
 	if isSettingsEmpty(settings) {
 		log.Printf("[user-settings] Update(%q): settings empty, deleting entry", userID)
 		delete(s.settings, userID)

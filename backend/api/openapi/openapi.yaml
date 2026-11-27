@@ -119,7 +119,8 @@ paths:
       description: |
         Updates only supplied segment types and preserves unrelated settings.
         Values are stored per profile and returned by GET /api/users/{userId}/settings
-        as playback.introAutoSkip, playback.recapAutoSkip and playback.creditsAutoSkip.
+        as playback.introAutoSkip, playback.recapAutoSkip, playback.creditsAutoSkip and
+        playback.commercialAutoSkip.
         Requires ownership of the profile and its unlock token when PIN enforcement is on.
         Clients must not import unscoped browser preferences into an arbitrary profile.
       parameters:
@@ -139,6 +140,7 @@ paths:
                 intro: {type: boolean}
                 recap: {type: boolean}
                 credits: {type: boolean}
+                commercial: {type: boolean}
       responses:
         '200':
           description: Supplied preferences saved
@@ -151,6 +153,7 @@ paths:
                   intro: {type: boolean}
                   recap: {type: boolean}
                   credits: {type: boolean}
+                  commercial: {type: boolean}
         '400':
           description: Empty, unknown or malformed preferences
         '403':

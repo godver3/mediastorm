@@ -11,6 +11,8 @@ type SkipPreferences struct {
 	Intro   *bool `json:"intro,omitempty"`
 	Recap   *bool `json:"recap,omitempty"`
 	Credits *bool `json:"credits,omitempty"`
+	// Commercial skips a recording's commercial breaks.
+	Commercial *bool `json:"commercial,omitempty"`
 }
 
 // UpdateSkipping preserves unrelated settings and serializes concurrent toggles.
@@ -31,6 +33,9 @@ func (s *Service) UpdateSkipping(userID string, patch SkipPreferences) error {
 	}
 	if patch.Credits != nil {
 		updated.Playback.CreditsAutoSkip = models.BoolPtr(*patch.Credits)
+	}
+	if patch.Commercial != nil {
+		updated.Playback.CommercialAutoSkip = models.BoolPtr(*patch.Commercial)
 	}
 	s.settings[userID] = updated
 	if err := s.saveLocked(); err != nil {

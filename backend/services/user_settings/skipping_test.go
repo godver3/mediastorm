@@ -102,3 +102,32 @@ func TestStaleFullSettingsSaveKeepsSkipChoices(t *testing.T) {
 		t.Fatal("full settings save did not apply its other fields")
 	}
 }
+
+// Commercial auto-skip is stored like the others: only its own patch changes it, and a stale full
+// settings save keeps it.
+func TestCommercialAutoSkip(t *testing.T) {
+	s, err := NewService(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateSkipping("adult", SkipPreferences{Commercial: models.BoolPtr(true)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Update("adult", models.UserSettings{Playback: models.PlaybackSettings{
+		PreferredAudioLanguage: "eng",
+		CommercialAutoSkip:     models.BoolPtr(false),
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	adult, err := s.Get("adult")
+	if err != nil || adult == nil || adult.Playback.CommercialAutoSkip == nil || !*adult.Playback.CommercialAutoSkip {
+		t.Fatalf("commercial auto-skip = %+v (%v), want kept true", adult, err)
+	}
+	if adult.Playback.IntroAutoSkip != nil {
+		t.Error("the commercial patch changed intro auto-skip")
+	}
+	withDefaults, err := s.GetWithDefaults("child", models.DefaultUserSettings())
+	if err != nil || withDefaults.Playback.CommercialAutoSkip == nil || *withDefaults.Playback.CommercialAutoSkip {
+		t.Errorf("default commercial auto-skip = %v (%v), want false", withDefaults.Playback.CommercialAutoSkip, err)
+	}
+}
