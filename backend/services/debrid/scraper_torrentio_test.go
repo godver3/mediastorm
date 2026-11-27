@@ -188,3 +188,25 @@ func TestTorrentioScraperRetriesTransientTimeout(t *testing.T) {
 		t.Fatalf("unexpected streams after retry: %+v", streams)
 	}
 }
+
+func TestTorrentioScraperFetchStreamsDebridResolveURL(t *testing.T) {
+	hash := "ABCDEF0123456789ABCDEF0123456789ABCDEF01"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"streams":[{"name":"[TB+] Torrentio\n1080p","title":"Movie.2020.1080p.WEB\n💾 2.1 GB ⚙️ YTS","url":"` +
+			"http://" + r.Host + `/resolve/torbox/SECRET/` + hash + `/null/3/Movie.2020.1080p.mkv"}]}`))
+	}))
+	defer server.Close()
+
+	s := NewTorrentioScraper(server.Client(), "torbox=SECRET", "", server.URL)
+	streams, err := s.fetchStreams(context.Background(), MediaTypeMovie, "tt1234567")
+	if err != nil {
+		t.Fatalf("fetchStreams: %v", err)
+	}
+	if len(streams) != 1 {
+		t.Fatalf("expected 1 stream, got %d", len(streams))
+	}
+	if streams[0].infoHash != strings.ToLower(hash) || streams[0].fileIdx != 3 {
+		t.Fatalf("got hash=%q idx=%d", streams[0].infoHash, streams[0].fileIdx)
+	}
+}

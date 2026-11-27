@@ -537,6 +537,12 @@ func (t *TorrentioScraper) fetchStreams(ctx context.Context, mediaType MediaType
 	streams := make([]torrentioStream, 0, len(payload.Streams))
 	for _, stream := range payload.Streams {
 		infoHash := strings.ToLower(strings.TrimSpace(stream.InfoHash))
+		var urlFileIdx *int
+		if infoHash == "" {
+			// With a debrid key in the Torrentio config (e.g. torbox=KEY),
+			// streams carry a resolve URL instead of infoHash/fileIdx.
+			infoHash, urlFileIdx = parseTorrentioResolveURL(stream.URL)
+		}
 		if infoHash == "" {
 			continue
 		}
@@ -552,6 +558,8 @@ func (t *TorrentioScraper) fetchStreams(ctx context.Context, mediaType MediaType
 		fileIdx := 0
 		if stream.FileIdx != nil {
 			fileIdx = *stream.FileIdx
+		} else if urlFileIdx != nil {
+			fileIdx = *urlFileIdx
 		}
 		titleText := deriveTitle(rawTitle)
 		sizeBytes := parseSize(rawTitle)
@@ -593,6 +601,40 @@ func (t *TorrentioScraper) fetchStreams(ctx context.Context, mediaType MediaType
 	}
 
 	return streams, nil
+}
+
+var reInfoHash = regexp.MustCompile(`^(?i)[0-9a-f]{40}$`)
+
+// parseTorrentioResolveURL extracts the info hash and file index from a
+// debrid-configured Torrentio stream URL:
+// {base}/resolve/{provider}/{apiKey}/{infoHash}/{cachedEntryInfo}/{fileIndex}/{filename}
+func parseTorrentioResolveURL(raw string) (string, *int) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", nil
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	for i, p := range parts {
+		if p != "resolve" || i+3 >= len(parts) {
+			continue
+		}
+		hash := parts[i+3]
+		if !reInfoHash.MatchString(hash) {
+			return "", nil
+		}
+		var idx *int
+		if i+5 < len(parts) {
+			if n, err := strconv.Atoi(parts[i+5]); err == nil && n >= 0 {
+				idx = &n
+			}
+		}
+		return strings.ToLower(hash), idx
+	}
+	return "", nil
 }
 
 func isTorrentioTransientRequestError(err error) bool {
