@@ -216,19 +216,32 @@ func TestPrequeueLibraryCopyEdges(t *testing.T) {
 		t.Fatalf("the library copy was prepared twice: %s, %s", first.ID, second.ID)
 	}
 
-	// S01E03 is not in the library: the default preset picked there is
-	// forgotten (the title follows the defaults), so S01E02 plays the file.
+	if _, err := h.RunWorkerSyncScoped(context.Background(), "tvdb:series:396876", "Shadows House", "", "series", 0, "u1", "jellyfin-tv", "scope", &models.EpisodeReference{SeasonNumber: 1, EpisodeNumber: 2}); !errors.Is(err, errPrewarmLibraryCopy) {
+		t.Fatalf("pre-warm of a library episode: %v", err)
+	}
+
+	// S01E03 is not in the library, S01E02 is: the default preset picked on
+	// S01E03 is a pick for the series and stays remembered, so S01E02 searches
+	// with it instead of playing the file.
 	postPrequeue(t, h, episodeRequest(3, "simple"))
 	deadline := time.Now().Add(5 * time.Second)
 	for len(memory.last()) == 0 && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
-	if got := memory.last(); len(got) != 1 || got[0] != "" {
-		t.Fatalf("remembered %q, want the default preset forgotten", got)
+	if got := memory.last(); len(got) != 1 || got[0] != "simple" {
+		t.Fatalf("remembered %q, want the default preset kept", got)
 	}
+	if e := postPrequeue(t, h, episodeRequest(2, "")); strings.HasSuffix(e.SettingsScopeKey, "|library") {
+		t.Fatal("after a series pick, S01E02 played the library copy")
+	}
+}
 
-	if _, err := h.RunWorkerSyncScoped(context.Background(), "tvdb:series:396876", "Shadows House", "", "series", 0, "u1", "jellyfin-tv", "scope", &models.EpisodeReference{SeasonNumber: 1, EpisodeNumber: 2}); !errors.Is(err, errPrewarmLibraryCopy) {
-		t.Fatalf("pre-warm of a library episode: %v", err)
+// TestPrequeueRejectedPresetSearches: a preset the server rejects is still a
+// pick of a stream; it does not fall into the library copy.
+func TestPrequeueRejectedPresetSearches(t *testing.T) {
+	h, _, _, _ := newLibraryPrequeueHandler(t)
+	if e := postPrequeue(t, h, episodeRequest(2, "no-such-preset")); strings.HasSuffix(e.SettingsScopeKey, "|library") {
+		t.Fatal("a rejected preset played the library copy")
 	}
 }
 

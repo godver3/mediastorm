@@ -1,13 +1,16 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"novastream/config"
+	"novastream/internal/auth"
 	"novastream/models"
+	"novastream/services/libraryaccess"
 	"novastream/services/localmedia"
 )
 
@@ -98,5 +101,53 @@ func TestQualityPresetClientListOffersLibraryCopy(t *testing.T) {
 	remembered = ""
 	if offered, movie, _, prefer := list("/x?mediaType=movie&titleId=tmdb:movie:1&name=Heat"); len(offered) != 0 || movie.PresetID != "" || prefer {
 		t.Fatalf("switched off: offered %v, movie %+v, prefer %v", offered, movie, prefer)
+	}
+}
+
+// TestFindLibraryCopyAccess: libraries the profile may not open do not count,
+// a profile of another account finds nothing unless the request is a master
+// key, and a pre-warm (no request) uses the profile's own account.
+func TestFindLibraryCopyAccess(t *testing.T) {
+	svc := &fakeLocalMediaPlaybackService{copies: []localmedia.LibraryCopy{
+		{Item: models.LocalMediaItem{ID: "denied", FileName: "Big.mkv", SizeBytes: 999}, LibraryID: "lib-denied", LibraryName: "Denied"},
+		{Item: models.LocalMediaItem{ID: "ok", FileName: "Movie.mkv", SizeBytes: 10}, LibraryID: "lib-ok", LibraryName: "Movies"},
+	}}
+	access := libraryaccess.New(&fakeLibraryAccessRepo{policies: map[string]models.LibraryAccessPolicy{
+		"lib-ok":     {LibraryID: "lib-ok", AccessMode: models.LibraryAccessModeRestricted, AllowedAccountIDs: []string{"acct1"}},
+		"lib-denied": {LibraryID: "lib-denied", AccessMode: models.LibraryAccessModeRestricted, AllowedAccountIDs: []string{"acct2"}},
+	}}, nil, nil)
+	q := LibraryCopyQuery{MediaType: "movie", TitleID: "tmdb:movie:1"}
+	req := func(account string, master bool) *http.Request {
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		ctx := context.WithValue(r.Context(), auth.ContextKeyAccountID, account)
+		ctx = context.WithValue(ctx, auth.ContextKeyIsMaster, master)
+		return r.WithContext(ctx)
+	}
+
+	own := NewLocalMediaHandler(svc, fakeLocalMediaUsersProvider{allowed: true}, false)
+	own.SetLibraryAccessService(access)
+	if got, err := own.FindLibraryCopy(req("acct1", false), "u1", q); err != nil || got == nil || got.ItemID != "ok" {
+		t.Fatalf("denied library not skipped: %+v, %v", got, err)
+	}
+
+	other := NewLocalMediaHandler(svc, fakeLocalMediaUsersProvider{allowed: false}, false)
+	other.SetLibraryAccessService(access)
+	if got, _ := other.FindLibraryCopy(req("acct1", false), "u-other", q); got != nil {
+		t.Fatalf("another account's profile got %+v", got)
+	}
+	// A master key may act for the profile; the profile's access still applies.
+	if got, err := other.FindLibraryCopy(req("acct1", true), "u-other", q); err != nil || got == nil || got.ItemID != "ok" {
+		t.Fatalf("master request: %+v, %v", got, err)
+	}
+
+	prewarm := NewLocalMediaHandler(svc, fakeLocalMediaUsersProvider{allowed: true, user: models.User{ID: "u1", AccountID: "acct1"}, userOK: true}, false)
+	prewarm.SetLibraryAccessService(access)
+	if got, err := prewarm.FindLibraryCopy(nil, "u1", q); err != nil || got == nil || got.ItemID != "ok" {
+		t.Fatalf("pre-warm: %+v, %v", got, err)
+	}
+	stranger := NewLocalMediaHandler(svc, fakeLocalMediaUsersProvider{allowed: true, user: models.User{ID: "u3", AccountID: "acct3"}, userOK: true}, false)
+	stranger.SetLibraryAccessService(access)
+	if got, _ := stranger.FindLibraryCopy(nil, "u3", q); got != nil {
+		t.Fatalf("pre-warm for a profile without access got %+v", got)
 	}
 }

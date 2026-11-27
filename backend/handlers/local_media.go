@@ -700,28 +700,8 @@ func (h *LocalMediaHandler) FindLibraryCopy(r *http.Request, profileID string, q
 	if strings.TrimSpace(q.TitleID) == "" && strings.TrimSpace(q.Title) == "" && q.IMDBID == "" && q.TMDBID == "" && q.TVDBID == "" {
 		return nil, nil // nothing to look up
 	}
-	query := models.LocalMediaMatchQuery{MediaType: q.MediaType, TitleID: strings.TrimSpace(q.TitleID), Title: strings.TrimSpace(q.Title), Year: q.Year,
-		IMDBID: strings.TrimSpace(q.IMDBID), TMDBID: strings.TrimSpace(q.TMDBID), TVDBID: strings.TrimSpace(q.TVDBID)}
-	// The catalog's title ID carries one external ID ("tmdb:tv:1399",
-	// "tvdb:series:81189", "imdb:tt0944947"); a library file may be matched
-	// under another, so every known one is compared.
-	parts := strings.Split(query.TitleID, ":")
-	if last := parts[len(parts)-1]; len(parts) >= 2 {
-		switch strings.ToLower(parts[0]) {
-		case "tmdb":
-			if query.TMDBID == "" {
-				query.TMDBID = last
-			}
-		case "tvdb":
-			if query.TVDBID == "" {
-				query.TVDBID = last
-			}
-		case "imdb":
-			if query.IMDBID == "" {
-				query.IMDBID = last
-			}
-		}
-	}
+	query := localmedia.WithTitleIDExternalIDs(models.LocalMediaMatchQuery{MediaType: q.MediaType, TitleID: strings.TrimSpace(q.TitleID), Title: strings.TrimSpace(q.Title), Year: q.Year,
+		IMDBID: strings.TrimSpace(q.IMDBID), TMDBID: strings.TrimSpace(q.TMDBID), TVDBID: strings.TrimSpace(q.TVDBID)})
 	ctx, accountID, isMaster := context.Background(), "", false
 	if r != nil {
 		ctx, accountID, isMaster = r.Context(), auth.GetAccountID(r), auth.IsMaster(r)
@@ -734,19 +714,15 @@ func (h *LocalMediaHandler) FindLibraryCopy(r *http.Request, profileID string, q
 	if err != nil || len(copies) == 0 {
 		return nil, err
 	}
-	if profileID != "" && h.access != nil && (accountID == "" || h.usersSvc == nil || !h.usersSvc.BelongsToAccount(profileID, accountID)) {
+	// A master key may act for any profile; others only for their account's.
+	if profileID != "" && h.access != nil && !isMaster && (accountID == "" || h.usersSvc == nil || !h.usersSvc.BelongsToAccount(profileID, accountID)) {
 		return nil, nil
 	}
 	movieCap, tvCap := h.profileKidsRatingCaps(profileID)
-	var best *LibraryCopy
-	for _, c := range copies {
+	best, err := localmedia.PickLibraryCopy(copies, func(c localmedia.LibraryCopy) (bool, error) {
 		if h.access != nil {
-			allowed, err := h.access.CanAccess(ctx, c.LibraryID, accountID, profileID, isMaster)
-			if err != nil {
-				return nil, err
-			}
-			if !allowed {
-				continue
+			if allowed, err := h.access.CanAccess(ctx, c.LibraryID, accountID, profileID, isMaster); err != nil || !allowed {
+				return false, err
 			}
 		}
 		if movieCap != "" || tvCap != "" {
@@ -754,18 +730,16 @@ func (h *LocalMediaHandler) FindLibraryCopy(r *http.Request, profileID string, q
 			if c.Item.Metadata != nil {
 				group.Certification = strings.TrimSpace(c.Item.Metadata.Certification)
 			}
-			if !kids.IsLibraryGroupAllowed(group, movieCap, tvCap) {
-				continue
-			}
+			return kids.IsLibraryGroupAllowed(group, movieCap, tvCap), nil
 		}
-		if best != nil && c.Item.SizeBytes <= best.SizeBytes {
-			continue // a sample or a smaller copy
-		}
-		name := strings.TrimSpace(c.Item.FileName)
-		if name == "" {
-			name = filepath.Base(c.Item.FilePath)
-		}
-		best = &LibraryCopy{ItemID: c.Item.ID, StreamPath: localmedia.BuildStreamPath(c.Item), Name: name, LibraryName: c.LibraryName, SizeBytes: c.Item.SizeBytes}
+		return true, nil
+	})
+	if err != nil || best == nil {
+		return nil, err
 	}
-	return best, nil
+	name := strings.TrimSpace(best.Item.FileName)
+	if name == "" {
+		name = filepath.Base(best.Item.FilePath)
+	}
+	return &LibraryCopy{ItemID: best.Item.ID, StreamPath: localmedia.BuildStreamPath(best.Item), Name: name, LibraryName: best.LibraryName, SizeBytes: best.Item.SizeBytes}, nil
 }

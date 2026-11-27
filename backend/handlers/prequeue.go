@@ -1300,19 +1300,27 @@ func (h *PrequeueHandler) Prequeue(w http.ResponseWriter, r *http.Request) {
 	if !req.NoLibraryCopy {
 		libraryCopy = h.libraryCopyFor(r, req, mediaType, titleName, targetEpisode)
 	}
+	// The user picked a stream version, even one the server then rejects:
+	// that request searches rather than falling into the library copy.
+	pickedStream := strings.TrimSpace(requestedPreset) != ""
 	if qualityPreset != "" || wantLibrary {
 		if qualityPreset != "" {
 			settingsScopeKey += "|preset:" + qualityPreset
 		}
 		// Picking the library copy clears a preset remembered for the title;
-		// picking a preset for a title a library has keeps it remembered even
-		// when it is the default one, so its later playbacks search too.
+		// picking a preset for a title a library has (any episode of a
+		// series, not just this one) keeps it remembered even when it is the
+		// default one, so its later playbacks search too.
+		keepDefault := false
+		if qualityPreset != "" {
+			keepDefault = libraryCopy != nil || (!req.NoLibraryCopy && h.titleHasLibraryCopy(r, req, mediaType, titleName))
+		}
 		pick := titlePresetPick{UserID: req.UserID, ClientID: clientID, TitleID: req.TitleID, MediaType: mediaType,
-			Name: titleName, ImdbID: req.ImdbID, Year: req.Year, PresetID: qualityPreset, keepDefault: libraryCopy != nil && qualityPreset != ""}
+			Name: titleName, ImdbID: req.ImdbID, Year: req.Year, PresetID: qualityPreset, keepDefault: keepDefault}
 		pick.seq = h.titlePresetPicks.take(pick)
 		go h.rememberTitlePreset(pick)
 	}
-	if libraryCopy != nil && qualityPreset == "" && (wantLibrary || !h.titleHasPresetPick(req.UserID, clientID, req.TitleID, mediaType)) {
+	if libraryCopy != nil && !pickedStream && (wantLibrary || !h.titleHasPresetPick(req.UserID, clientID, req.TitleID, mediaType)) {
 		h.startLibraryPrequeue(w, req, clientID, mediaType, titleName, targetEpisode, settingsScopeKey, libraryCopy)
 		return
 	}
@@ -4560,6 +4568,23 @@ func (h *PrequeueHandler) libraryCopyFor(r *http.Request, req playback.PrequeueR
 		return nil
 	}
 	return found
+}
+
+// titleHasLibraryCopy reports whether the profile's libraries have any copy
+// of the title: for a series, any of its episodes.
+func (h *PrequeueHandler) titleHasLibraryCopy(r *http.Request, req playback.PrequeueRequest, mediaType, titleName string) bool {
+	if h.libraryCopies == nil || h.configManager == nil {
+		return false
+	}
+	if settings, err := h.configManager.Load(); err != nil || settings.QualityPresets.IgnoreLibraryCopies {
+		return false
+	}
+	q := LibraryCopyQuery{MediaType: mediaType, TitleID: req.TitleID, Title: titleName, Year: req.Year, IMDBID: req.ImdbID, TMDBID: req.TmdbID, TVDBID: req.TvdbID}
+	if mediaType == "series" || mediaType == "tv" || mediaType == "show" {
+		q.MediaType = "series" // no episode: the series' files
+	}
+	found, err := h.libraryCopies(r, req.UserID, q)
+	return err == nil && found != nil
 }
 
 // alternateOrdering reports whether an episode is numbered in an ordering
