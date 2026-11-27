@@ -92,7 +92,7 @@ func TestHistorySyncRetriesFailedAndPreviewRunsWithoutCursor(t *testing.T) {
 			case "error":
 				task.LastStatus = config.ScheduledTaskStatusError
 			case "preview":
-				task.DryRunDetails = &config.DryRunDetails{}
+				task.HasDryRunDetails = true
 			case "full":
 				task.Config["fullSync"] = "true"
 			}

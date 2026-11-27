@@ -345,9 +345,25 @@ func (h *ScheduledTasksHandler) ListTasks(w http.ResponseWriter, r *http.Request
 		tasks = scoped
 	}
 
+	// Dry-run results live outside settings.json; attach them for the admin UI.
+	type taskResponse struct {
+		config.ScheduledTask
+		DryRunDetails *config.DryRunDetails `json:"dryRunDetails,omitempty"`
+	}
+	out := make([]taskResponse, 0, len(tasks))
+	for _, task := range tasks {
+		resp := taskResponse{ScheduledTask: task}
+		if task.HasDryRunDetails && h.configManager != nil {
+			if details, err := h.configManager.LoadDryRunDetails(task.ID); err == nil {
+				resp.DryRunDetails = details
+			}
+		}
+		out = append(out, resp)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"tasks": tasks,
+		"tasks": out,
 	})
 }
 

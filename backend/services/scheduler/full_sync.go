@@ -11,7 +11,7 @@ import (
 // incremental cursors. Replaying the library also retries partial exports.
 func historySyncLastRun(task config.ScheduledTask) *time.Time {
 	if task.Config["fullSync"] == "true" || task.Config["fullExport"] == "true" ||
-		task.LastStatus == config.ScheduledTaskStatusError || task.DryRunDetails != nil {
+		task.LastStatus == config.ScheduledTaskStatusError || task.HasDryRunDetails {
 		return nil
 	}
 	return task.LastRunAt

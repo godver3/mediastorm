@@ -2119,8 +2119,12 @@ type ScheduledTask struct {
 	LastStatus    ScheduledTaskStatus    `json:"lastStatus"`
 	LastError     string                 `json:"lastError,omitempty"`
 	ItemsImported int                    `json:"itemsImported,omitempty"`
-	DryRunDetails *DryRunDetails         `json:"dryRunDetails,omitempty"` // Results from dry run (what would be added/removed)
-	CreatedAt     time.Time              `json:"createdAt"`
+	// DryRunDetails is kept out of settings.json (it can be megabytes); it lives
+	// in a sidecar file, see LoadDryRunDetails. HasDryRunDetails records that
+	// the last run was a dry run.
+	DryRunDetails    *DryRunDetails `json:"-"`
+	HasDryRunDetails bool           `json:"hasDryRunDetails,omitempty"`
+	CreatedAt        time.Time      `json:"createdAt"`
 }
 
 // ScheduledTasksSettings contains all scheduled task configurations
@@ -2450,7 +2454,8 @@ func backfillUsenetEngineDefaults(existing []UsenetEngineSettings) []UsenetEngin
 
 // Manager loads and persists settings to a JSON file.
 type Manager struct {
-	path string
+	path  string
+	cache settingsCache
 }
 
 func NewManager(configPath string) *Manager {
@@ -2508,7 +2513,7 @@ func (m *Manager) EnsureDir() error {
 }
 
 // Load reads settings.json from disk or creates defaults if missing.
-func (m *Manager) Load() (Settings, error) {
+func (m *Manager) loadUncached() (Settings, error) {
 	if m.path == "" {
 		return Settings{}, errors.New("config path not set")
 	}
@@ -2532,6 +2537,7 @@ func (m *Manager) Load() (Settings, error) {
 	if err := dec.Decode(&raw); err != nil {
 		return Settings{}, err
 	}
+	m.migrateDryRunDetailsRaw(raw)
 
 	// Check if usenet is an object (old format) instead of array
 	if usenetRaw, ok := raw["usenet"].(map[string]interface{}); ok {
@@ -3496,5 +3502,9 @@ func (m *Manager) Save(s Settings) error {
 		_ = os.Remove(tmp)
 		return err
 	}
-	return os.Rename(tmp, m.path)
+	if err := os.Rename(tmp, m.path); err != nil {
+		return err
+	}
+	m.cache.invalidate()
+	return nil
 }

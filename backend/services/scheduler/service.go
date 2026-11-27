@@ -445,13 +445,15 @@ func (s *Service) updateTaskStatus(taskID string, err error, result SyncResult) 
 
 			// Store dry run details if this was a dry run
 			if result.DryRun {
-				settings.ScheduledTasks.Tasks[i].DryRunDetails = &config.DryRunDetails{
-					ToAdd:    result.ToAdd,
-					ToRemove: result.ToRemove,
+				details := &config.DryRunDetails{ToAdd: result.ToAdd, ToRemove: result.ToRemove}
+				if saveErr := s.configManager.SaveDryRunDetails(taskID, details); saveErr != nil {
+					log.Printf("[scheduler] Failed to store dry run details for %s: %v", taskID, saveErr)
 				}
+				settings.ScheduledTasks.Tasks[i].HasDryRunDetails = true
 			} else {
 				// Clear dry run details for real runs
-				settings.ScheduledTasks.Tasks[i].DryRunDetails = nil
+				_ = s.configManager.SaveDryRunDetails(taskID, nil)
+				settings.ScheduledTasks.Tasks[i].HasDryRunDetails = false
 			}
 
 			if err != nil {
