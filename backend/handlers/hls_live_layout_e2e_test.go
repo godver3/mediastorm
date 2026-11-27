@@ -144,3 +144,94 @@ func TestSuperviseLiveTranscodingRebuildsLayoutChangesWithoutFailureBudget(t *te
 		t.Fatal("supervisor ended while the capped run was still going")
 	}
 }
+
+// A web session that copies its video and is switched to the encode (ForceLiveVideoEncode) is
+// rebuilt at once, outside the failure budget, and the rebuild encodes and marks where the encoded
+// part starts.
+func TestSuperviseLiveTranscodingRebuildsWebSwitchToEncodeAtOnce(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake ffmpeg shell script is POSIX-only")
+	}
+	dir := t.TempDir()
+	runs := filepath.Join(dir, "runs")
+	script := filepath.Join(dir, "ffmpeg")
+	body := fmt.Sprintf("#!/bin/sh\necho \"$*\" >> %q\nexec sleep 30\n", runs)
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatalf("write fake ffmpeg: %v", err)
+	}
+	readRuns := func() []string {
+		data, _ := os.ReadFile(runs)
+		return strings.Split(strings.TrimSpace(string(data)), "\n")
+	}
+	waitRuns := func(n int, within time.Duration) []string {
+		deadline := time.Now().Add(within)
+		for {
+			if lines := readRuns(); len(lines) >= n && lines[0] != "" {
+				return lines
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("only %d FFmpeg runs within %v, want %d", len(readRuns()), within, n)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	session := &HLSSession{
+		ID: "web-switch", Path: "http://provider.invalid/live.m3u8", LiveProvider: "m3u",
+		OutputDir: filepath.Join(dir, "output"), PlaybackTarget: "web", IsLive: true,
+		LastSegmentRequest: time.Now(), SegmentRequestCount: 1,
+		LiveTuning: LiveTuningSettings{WebVideoCopy: true},
+		// Decided as on a first run that found browser-safe H.264.
+		webVideoCopy: true, webVideoCopyDecided: true,
+	}
+	m := &HLSManager{ffmpegPath: script, sessions: map[string]*HLSSession{session.ID: session}}
+	go func() { _ = m.superviseLiveTranscoding(ctx, session) }()
+
+	if first := waitRuns(1, 20*time.Second)[0]; !strings.Contains(first, "-c:v copy") || strings.Contains(first, "libx264") {
+		t.Fatalf("first run does not copy the video: %s", first)
+	}
+	// The run must have started before the switch, so that the switch stops it.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		session.mu.RLock()
+		started := session.FFmpegPID != 0
+		session.mu.RUnlock()
+		if started {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("first run never started")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	switchedAt := time.Now()
+	if switched, _, err := m.ForceLiveVideoEncode(session.ID); err != nil || !switched {
+		t.Fatalf("switch: %v %v", switched, err)
+	}
+	// A failure would wait at least a second before the rebuild (and spend the budget).
+	second := waitRuns(2, 20*time.Second)[1]
+	if elapsed := time.Since(switchedAt); elapsed >= 900*time.Millisecond {
+		t.Errorf("rebuild after %v, want at once", elapsed)
+	}
+	if !strings.Contains(second, "libx264") || strings.Contains(second, "-c:v copy") {
+		t.Fatalf("rebuild does not encode the video: %s", second)
+	}
+	session.mu.RLock()
+	pending, from := session.webEncodePending, session.liveEncodedFrom
+	session.mu.RUnlock()
+	if pending || from != 0 {
+		t.Fatalf("after the encoding run started: pending=%v liveEncodedFrom=%d, want false 0", pending, from)
+	}
+	// The encoding run ending is an ordinary failure again: it waits before the next run.
+	session.mu.RLock()
+	cmd := session.FFmpegCmd
+	session.mu.RUnlock()
+	_ = cmd.Process.Kill()
+	time.Sleep(600 * time.Millisecond)
+	if n := len(readRuns()); n != 2 {
+		t.Fatalf("%d runs 600ms after the encoding run failed, want the failure delay first", n)
+	}
+	waitRuns(3, 10*time.Second)
+}

@@ -21,9 +21,10 @@ const (
 	liveCodecPeekTimeout = 3 * time.Second
 )
 
-// peekLiveTSVideoCodec reads body until its PMT names a video codec, the limit,
-// the timeout, or an error, and returns the codec ("" when unknown) with a
-// reader that replays the peeked bytes before the rest of body.
+// peekLiveTSVideoCodec reads body until its PMT is read, the limit, the timeout,
+// or an error, and returns the video codec ("none" for a PMT without video, such
+// as a radio service; "" when no PMT was read) with a reader that replays the
+// peeked bytes before the rest of body.
 func peekLiveTSVideoCodec(body io.ReadCloser, limit int, timeout time.Duration) (string, io.ReadCloser) {
 	inspector := newTSInspector("codec-peek")
 	inspector.logf = func(string, ...any) {}
@@ -48,7 +49,8 @@ func peekLiveTSVideoCodec(body io.ReadCloser, limit int, timeout time.Duration) 
 	}{io.MultiReader(bytes.NewReader(peeked.Bytes()), body), body}
 }
 
-// videoCodec is the first video stream's codec in the current PMT, or "".
+// videoCodec is the first video stream's codec in the current PMT, "none" when the
+// PMT lists no video, or "" before a PMT was read.
 func (t *tsInspector) videoCodec() string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -56,6 +58,9 @@ func (t *tsInspector) videoCodec() string {
 		if stream.Kind == "video" {
 			return stream.Codec
 		}
+	}
+	if t.pmtVersion >= 0 {
+		return "none"
 	}
 	return ""
 }

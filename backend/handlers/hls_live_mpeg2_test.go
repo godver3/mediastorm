@@ -61,6 +61,32 @@ func TestPeekLiveTSVideoCodecReplaysPeekedBytes(t *testing.T) {
 	if codec, _ := peekLiveTSVideoCodec(io.NopCloser(strings.NewReader("not a transport stream")), 1024, time.Second); codec != "" {
 		t.Fatalf("garbage codec=%q", codec)
 	}
+	// A radio service: its PMT lists no video, which answers at once instead of at the timeout.
+	radioPath := filepath.Join(t.TempDir(), "radio.ts")
+	radio := exec.CommandContext(ctx, ffmpeg, "-hide_banner", "-loglevel", "error",
+		"-f", "lavfi", "-i", "sine=r=48000", "-t", "4", "-c:a", "mp2", "-f", "mpegts", radioPath)
+	if output, err := radio.CombinedOutput(); err != nil {
+		t.Fatalf("generate radio fixture: %v %s", err, output)
+	}
+	radioTS, err := os.ReadFile(radioPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pr, pw := io.Pipe()
+	go func() {
+		// The stream keeps coming, like a live channel: only the PMT can end the peek early.
+		_, _ = pw.Write(radioTS)
+		time.Sleep(10 * time.Second)
+		_ = pw.Close()
+	}()
+	defer pr.Close()
+	started := time.Now()
+	if codec, _ := peekLiveTSVideoCodec(pr, liveCodecPeekLimit, 5*time.Second); codec != "none" {
+		t.Fatalf("radio codec=%q, want none", codec)
+	}
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("radio peek took %v, want it to end with the PMT", elapsed)
+	}
 }
 
 // An HLS-requested tuner session encodes MPEG-2 video and its AC-3 for AVPlayer; an
@@ -83,14 +109,20 @@ func TestHDHomeRunHLSEncodesMPEG2VideoOnly(t *testing.T) {
 	}
 	const streamURL = "http://192.168.1.100:5004/auto/v5.1"
 	cases := []struct {
-		name, fixture string
-		encode        bool
-		wantVideo     string
-		wantAudio     string
+		name, fixture, target string
+		encode, webCopy       bool
+		wantVideo             string
+		wantAudio             string
+		wantEncoder           string
 	}{
-		{"mpeg2-hls", "mpeg2", true, "h264", "aac"},
-		{"mpeg2-direct", "mpeg2", false, "mpeg2video", "ac3"},
-		{"h264-hls", "h264", true, "h264", "ac3"},
+		{"mpeg2-hls", "mpeg2", "native", true, false, "h264", "aac", "libx264"},
+		{"mpeg2-direct", "mpeg2", "native", false, false, "mpeg2video", "ac3", "copy"},
+		{"h264-hls", "h264", "native", true, false, "h264", "ac3", "copy"},
+		// The web player: H.264 from the PMT is copied with stereo AAC, MPEG-2 is encoded.
+		{"h264-web", "h264", "web", false, true, "h264", "aac", "copy"},
+		{"mpeg2-web", "mpeg2", "web", false, true, "h264", "aac", "libx264"},
+		// Other web callers (the Jellyfin bridge) did not ask to copy: still the encode.
+		{"h264-web-bridge", "h264", "web", false, false, "h264", "aac", "libx264"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -104,8 +136,8 @@ func TestHDHomeRunHLSEncodesMPEG2VideoOnly(t *testing.T) {
 			m := &HLSManager{ffmpegPath: ffmpeg}
 			session := &HLSSession{
 				ID: "mpeg2-" + tc.name, Path: streamURL, LiveProvider: "m3u", IsLive: true,
-				OutputDir: filepath.Join(dir, tc.name), PlaybackTarget: "native", LastSegmentRequest: time.Now(),
-				LiveTuning: LiveTuningSettings{HDHomeRunInput: true, EncodeMPEG2Video: tc.encode},
+				OutputDir: filepath.Join(dir, tc.name), PlaybackTarget: tc.target, LastSegmentRequest: time.Now(),
+				LiveTuning: LiveTuningSettings{HDHomeRunInput: true, EncodeMPEG2Video: tc.encode, WebVideoCopy: tc.webCopy},
 			}
 			if err := m.startLiveTranscoding(ctx, session, 0); err != nil {
 				t.Fatalf("start: %v", err)
@@ -123,12 +155,15 @@ func TestHDHomeRunHLSEncodesMPEG2VideoOnly(t *testing.T) {
 			session.mu.RLock()
 			encoder := session.VideoEncoder
 			session.mu.RUnlock()
-			wantEncoder := "copy"
-			if tc.name == "mpeg2-hls" {
-				wantEncoder = "libx264"
+			if encoder != tc.wantEncoder {
+				t.Fatalf("encoder=%q want %q", encoder, tc.wantEncoder)
 			}
-			if encoder != wantEncoder {
-				t.Fatalf("encoder=%q want %q", encoder, wantEncoder)
+			// The PMT named the codec: the web player's decision is kept for restarts.
+			session.mu.RLock()
+			decided := session.webVideoCopyDecided
+			session.mu.RUnlock()
+			if decided != tc.webCopy {
+				t.Fatalf("web decision kept=%v, want %v", decided, tc.webCopy)
 			}
 		})
 	}

@@ -677,6 +677,7 @@ func Register(
 	protected.HandleFunc("/video/hls/{sessionID}/captions.srt", videoHandler.ServeHLSLiveCaptions).Methods(http.MethodGet, http.MethodOptions)
 	protected.HandleFunc("/video/hls/{sessionID}/cc-status", videoHandler.GetHLSLiveCCStatus).Methods(http.MethodGet, http.MethodOptions)
 	protected.HandleFunc("/video/hls/{sessionID}/keepalive", videoHandler.KeepAliveHLSSession).Methods(http.MethodPost, http.MethodOptions)
+	protected.HandleFunc("/video/hls/{sessionID}/live-encode", videoHandler.ForceLiveEncodeHLSSession).Methods(http.MethodPost, http.MethodOptions)
 	protected.HandleFunc("/video/hls/{sessionID}/stop", videoHandler.StopHLSSession).Methods(http.MethodPost, http.MethodOptions)
 	protected.HandleFunc("/video/hls/{sessionID}/status", videoHandler.GetHLSSessionStatus).Methods(http.MethodGet, http.MethodOptions)
 	protected.HandleFunc("/video/hls/{sessionID}/seek", videoHandler.SeekHLSSession).Methods(http.MethodPost, http.MethodOptions)

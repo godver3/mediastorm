@@ -711,6 +711,12 @@
       animation: live-pulse 2s infinite;
     }
 
+    /* Live timeshift: behind the live edge the badge shows the delay and returns to live on click. */
+    .controls [hidden] { display: none !important; }
+    .time.live-indicator.is-dvr { cursor: pointer; background: none; border: 0; padding: 0; font: inherit; font-size: 0.82rem; }
+    .time.live-indicator.is-behind { color: rgba(255, 255, 255, 0.78); font-weight: 600; letter-spacing: 0; }
+    .time.live-indicator.is-behind .live-dot { background: rgba(255, 255, 255, 0.55); animation: none; box-shadow: none; }
+
     @keyframes live-pulse {
       0% { box-shadow: 0 0 0 0 rgba(255, 59, 48, 0.6); }
       70% { box-shadow: 0 0 0 0.5rem rgba(255, 59, 48, 0); }
@@ -1335,6 +1341,8 @@
     const SHARE_MODE = routeParam('shareMode') === '1' || routeParam('shareMode') === 'true';
     const WATCH_PARTY_ROOM_ID = routeParam('watchPartyRoomId');
     const WATCH_PARTY_MODE = Boolean(WATCH_PARTY_ROOM_ID);
+    // The live session keeps a timeshift window (the tune asked for one and the server has one).
+    const LIVE_TIMESHIFT = routeParam('liveTimeshift') === '1';
     const SHARED_SOURCE_PLACEHOLDER = '__shared_source__';
     const WEB_PLAYER_PROGRESS_INTERVAL_MS = 10000;
     const WEB_PLAYER_PROGRESS_MIN_DELTA_SECONDS = 5;
@@ -1373,6 +1381,8 @@
     // The source whose copied video failed to decode: its sessions ask the
     // server to transcode instead (noVideoCopy).
     let webPlayerNoVideoCopyFor = '';
+    // Set once a live session was asked to encode its video instead of copying it.
+    let webPlayerLiveEncodeRequested = false;
     let webPlayerUserSubtitleOffset = 0;
     let nextEpisodeInfo = null;
     let upNextDismissed = false;
@@ -1407,6 +1417,8 @@
     let webPlayerSubtitleRenderFrame = null;
     let webPlayerControlsHideTimer = null;
     let webPlayerMediaRecoverAttempts = 0;
+    // Where the last media error recovery happened; attempts are forgotten once playback moves on.
+    let webPlayerMediaRecoverPosition = 0;
     const WEB_PLAYER_VOLUME_STORAGE_KEY = 'strmr.webPlayerVolume';
     const savedWebPlayerVolume = loadWebPlayerVolumePrefs();
     let webPlayerVolume = savedWebPlayerVolume.volume;
@@ -2397,14 +2409,14 @@
           <button class="btn icon-btn nav-back desktop-only" onclick="goBackToWatch()" aria-label="Back to details" title="Back to details">
             <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg></span>
           </button>
-          ${isLive ? '' : `<button id="skipBackButton" class="btn icon-btn" onclick="skipWebPlayer(-30)" aria-label="Skip back 30 seconds" title="${WATCH_PARTY_MODE ? 'The host controls playback' : 'Skip back 30 seconds'}" ${WATCH_PARTY_MODE ? 'disabled aria-disabled="true"' : ''}>
+          ${`<button id="skipBackButton" class="btn icon-btn" ${isLive ? 'hidden data-live-dvr' : ''} onclick="skipWebPlayer(-30)" aria-label="Skip back 30 seconds" title="${WATCH_PARTY_MODE ? 'The host controls playback' : 'Skip back 30 seconds'}" ${WATCH_PARTY_MODE ? 'disabled aria-disabled="true"' : ''}>
             <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="11 17 6 12 11 7"/><polyline points="18 17 13 12 18 7"/></svg></span>
           </button>`}
-          ${isLive ? '' : `<button id="playButton" class="btn icon-btn play-btn" onclick="togglePlayback()" aria-label="${WATCH_PARTY_MODE ? 'Playback controlled by host' : 'Play'}" title="${WATCH_PARTY_MODE ? 'The host controls playback' : 'Play'}" ${WATCH_PARTY_MODE ? 'disabled aria-disabled="true"' : ''}>
+          ${`<button id="playButton" class="btn icon-btn play-btn" ${isLive ? 'hidden data-live-dvr' : ''} onclick="togglePlayback()" aria-label="${WATCH_PARTY_MODE ? 'Playback controlled by host' : 'Play'}" title="${WATCH_PARTY_MODE ? 'The host controls playback' : 'Play'}" ${WATCH_PARTY_MODE ? 'disabled aria-disabled="true"' : ''}>
             <span class="icon play-icon"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></span>
             <span class="icon pause-icon"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg></span>
           </button>`}
-          ${isLive ? '' : `<button id="skipForwardButton" class="btn icon-btn" onclick="skipWebPlayer(30)" aria-label="Skip forward 30 seconds" title="${WATCH_PARTY_MODE ? 'The host controls playback' : 'Skip forward 30 seconds'}" ${WATCH_PARTY_MODE ? 'disabled aria-disabled="true"' : ''}>
+          ${`<button id="skipForwardButton" class="btn icon-btn" ${isLive ? 'hidden data-live-dvr' : ''} onclick="skipWebPlayer(30)" aria-label="Skip forward 30 seconds" title="${WATCH_PARTY_MODE ? 'The host controls playback' : 'Skip forward 30 seconds'}" ${WATCH_PARTY_MODE ? 'disabled aria-disabled="true"' : ''}>
             <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="13 17 18 12 13 7"/><polyline points="6 17 11 12 6 7"/></svg></span>
           </button>`}
           <button id="muteButton" class="btn icon-btn" onclick="toggleMute()" aria-label="Mute" title="Mute">
@@ -2421,8 +2433,9 @@
             <span class="icon fullscreen-enter"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg></span>
             <span class="icon fullscreen-exit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M21 8h-3a2 2 0 0 1-2-2V3"/><path d="M3 16h3a2 2 0 0 1 2 2v3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/></svg></span>
           </button>
-          ${isLive ? `<div class="seek-spacer"><span id="liveStreamInfo" class="live-stream-info"></span></div>
-          <div id="time" class="time live-indicator"><span class="live-dot"></span>LIVE</div>` : `<input id="seek" class="seek" type="range" min="0" max="${Math.max(1, Math.floor(hlsDuration || 1))}" step="1" value="${Math.floor(hlsPlaybackOffset)}" onpointerdown="beginSeekInput()" onmousedown="beginSeekInput()" ontouchstart="beginSeekInput()" onkeydown="beginSeekInput()" oninput="previewSeek(this.value)" onchange="commitSeek(this.value)" onblur="cancelSeekInput()">
+          ${isLive ? `<input id="liveSeek" class="seek" type="range" min="0" max="1" step="1" value="1" hidden aria-label="Timeshift position" onpointerdown="beginLiveSeekInput()" onmousedown="beginLiveSeekInput()" ontouchstart="beginLiveSeekInput()" onkeydown="beginLiveSeekInput()" oninput="previewLiveSeek(this.value)" onchange="commitLiveSeek(this.value)" onblur="cancelLiveSeekInput()">
+          <div id="liveSpacer" class="seek-spacer"><span id="liveStreamInfo" class="live-stream-info"></span></div>
+          <div id="time" class="time live-indicator" onclick="goLiveEdge()" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.stopPropagation(); goLiveEdge(); }"><span class="live-dot"></span><span id="liveLabel">LIVE</span></div>` : `<input id="seek" class="seek" type="range" min="0" max="${Math.max(1, Math.floor(hlsDuration || 1))}" step="1" value="${Math.floor(hlsPlaybackOffset)}" onpointerdown="beginSeekInput()" onmousedown="beginSeekInput()" ontouchstart="beginSeekInput()" onkeydown="beginSeekInput()" oninput="previewSeek(this.value)" onchange="commitSeek(this.value)" onblur="cancelSeekInput()">
           <div id="time" class="time">${formatTime(hlsPlaybackOffset)} / ${formatDurationLabel(hlsDuration)}</div>`}
         </div>
         ${isLive ? '' : `<div class="track-backdrop" onclick="closeTrackSheet()" aria-hidden="true"></div>
@@ -2535,8 +2548,13 @@
       }
 
       if (window.Hls && window.Hls.isSupported()) {
-        hlsInstance = new Hls({ lowLatencyMode: false, startPosition, backBufferLength: 30 });
+        // A timeshift playlist begins up to the whole window in the past: it starts where the
+        // playlist says (EXT-X-START, else hls.js's live edge). Other live playlists (a catch-up
+        // replay from the programme's start among them) keep starting at their first segment.
+        const liveEdgeStart = playbackMeta.isLive && (LIVE_TIMESHIFT || attachOptions.liveEdge);
+        hlsInstance = new Hls({ lowLatencyMode: false, startPosition: liveEdgeStart ? -1 : startPosition, backBufferLength: 30 });
         webPlayerMediaRecoverAttempts = 0;
+        webPlayerMediaRecoverPosition = 0;
         hlsInstance.loadSource(playlistUrl);
         hlsInstance.attachMedia(video);
         hlsInstance.on(Hls.Events.MANIFEST_LOADING, (_event, data) => {
@@ -2570,10 +2588,14 @@
             url: redactUrlForLog(frag?.url || ''),
           });
         });
-        // Once we're successfully buffering again, forget prior recovery attempts
-        // so an isolated later blip doesn't immediately exhaust the budget.
+        // Once playback has moved well past the last recovery, forget prior attempts so an
+        // isolated later blip doesn't immediately exhaust the budget. A buffered fragment alone
+        // is not enough: a decoder that fails on every segment still buffers each one first.
         hlsInstance.on(Hls.Events.FRAG_BUFFERED, () => {
-          webPlayerMediaRecoverAttempts = 0;
+          // Any distance counts: a seek (VOD or a timeshift rewind) or a new timeline moves away too.
+          if (webPlayerMediaRecoverAttempts && Math.abs(Number(video.currentTime || 0) - webPlayerMediaRecoverPosition) > 5) {
+            webPlayerMediaRecoverAttempts = 0;
+          }
         });
         hlsInstance.on(Hls.Events.ERROR, (_event, data) => {
           webPlayerDebugLog(data?.fatal ? 'error' : 'warn', 'hls error', {
@@ -2614,6 +2636,7 @@
             // give up. swapAudioCodec resolves the common "can't parse" cases
             // caused by an AAC/MP3 mismatch in the remuxed fMP4.
             webPlayerMediaRecoverAttempts += 1;
+            webPlayerMediaRecoverPosition = Number(video.currentTime || 0);
             if (webPlayerMediaRecoverAttempts === 1) {
               setStatus('Recovering playback…', true);
               hlsInstance.recoverMediaError();
@@ -2621,6 +2644,12 @@
               setStatus('Recovering playback…', true);
               hlsInstance.swapAudioCodec();
               hlsInstance.recoverMediaError();
+            } else if (playbackMeta.isLive && hlsSessionId && !webPlayerLiveEncodeRequested && isLiveCodecFailure(data, video)) {
+              // The browser cannot decode the channel's copied video: have the session encode it.
+              // (A stalled buffer or a timestamp gap is no reason to give up the timeshift window.)
+              webPlayerLiveEncodeRequested = true;
+              setStatus('Switching to a compatible stream…', true);
+              requestLiveVideoEncode(video);
             } else if (webPlayerStableTimeline && webPlayerNoVideoCopyFor !== sourcePath) {
               // The browser said it plays this video but cannot decode the
               // copy (a level or profile its decoder rejects): transcode it.
@@ -2660,7 +2689,10 @@
         attemptAutoplay(video);
         installSubtitleTrack(video);
       }, { once: true });
-      if (playbackMeta.isLive) startLiveStreamInfoTracking(video);
+      if (playbackMeta.isLive) {
+        startLiveStreamInfoTracking(video);
+        startLiveDvrTracking();
+      }
     }
 
     function parseWebFrameRate(value) {
@@ -3097,7 +3129,232 @@
         setTransientStatus('The host controls playback.');
         return;
       }
+      if (playbackMeta.isLive) {
+        const range = liveDvrRange();
+        if (range) liveDvrSeekTo(range.video.currentTime + Number(delta || 0));
+        return;
+      }
       seekWebPlayer(clampSeekTarget(currentControlTime() + Number(delta || 0)));
+    }
+
+    // Live timeshift: a timeshift session (timeshift=1 at tune-in) lists the admin's window, and
+    // hls.js exposes it as the video's seekable range. The controls show once it is worth
+    // rewinding into; seeking stays inside the player (no new session).
+    const LIVE_DVR_MIN_WINDOW_SECONDS = 60;
+    const LIVE_EDGE_TOLERANCE_SECONDS = 10;
+    // The server's EXT-X-START offset for live (liveMinimumStartOffsetSeconds in hls.go).
+    const LIVE_START_OFFSET_SECONDS = 14;
+    const LIVE_NATIVE_SEGMENT_GUESS_SECONDS = 6;
+    const LIVE_ENCODE_SWITCH_POLL_MS = 1000;
+    const LIVE_ENCODE_SWITCH_TIMEOUT_MS = 45000;
+    const LIVE_ENCODE_REJOIN_SEGMENTS = 3;
+    let liveSeekInputActive = false;
+    let liveSeekPreview = null;
+    let liveDvrTimer = null;
+
+    // The window as the playlist lists it now. hls.js keeps MSE's seekable range at [0, duration]
+    // (it does not slide), so it comes from the loaded level's fragments; native HLS (Safari)
+    // reports the sliding range itself.
+    function liveDvrRange() {
+      const video = document.getElementById('webPlayer');
+      if (!video || !playbackMeta.isLive || !LIVE_TIMESHIFT || WATCH_PARTY_MODE || SHARE_MODE) return null;
+      let start;
+      let end;
+      let targetDuration = 0;
+      if (hlsInstance) {
+        const level = hlsInstance.levels?.[Math.max(0, Number(hlsInstance.currentLevel) || 0)];
+        const details = hlsInstance.latestLevelDetails || level?.details;
+        const fragments = details?.fragments;
+        if (!fragments?.length) return null;
+        const last = fragments[fragments.length - 1];
+        // The live part's own segment length: the playlist's TARGETDURATION also covers a backlog's
+        // longer source segments, and hls.js's liveSyncPosition (3 of those behind) with it.
+        targetDuration = Math.max(...fragments.slice(-3).map((fragment) => Math.ceil(Number(fragment.duration) || 0)));
+        // The oldest segment is the next to leave the playlist: keep clear of it.
+        start = Number(fragments[0].start) + (Number(fragments[0].duration) || 0);
+        const edge = Number(details.edge ?? (Number(last.start) + Number(last.duration)));
+        // Live is where the server starts a player (EXT-X-START): at least 14 s, or three of the
+        // live part's segments, behind the newest one.
+        end = edge - Math.max(LIVE_START_OFFSET_SECONDS, 3 * targetDuration);
+        // Playback may run ahead of that: the edge to return to is never behind where it plays now.
+        end = Math.max(end, Math.min(Number(video.currentTime) || 0, edge));
+      } else {
+        const ranges = video.seekable;
+        if (!ranges || !ranges.length) return null;
+        start = ranges.start(0);
+        end = ranges.end(ranges.length - 1);
+      }
+      if (!Number.isFinite(start) || !Number.isFinite(end) || end - start < LIVE_DVR_MIN_WINDOW_SECONDS) return null;
+      // Within this distance of the edge counts as live (native HLS holds back three segments).
+      const tolerance = Math.max(LIVE_EDGE_TOLERANCE_SECONDS, hlsInstance ? 2 * targetDuration : 3.5 * LIVE_NATIVE_SEGMENT_GUESS_SECONDS);
+      return { video, start, end, tolerance };
+    }
+
+    function liveDvrSeekTo(position) {
+      const range = liveDvrRange();
+      const target = Number(position);
+      if (!range || !Number.isFinite(target)) return;
+      const current = Number(range.video.currentTime) || 0;
+      const clamped = Math.max(range.start, Math.min(target, range.end));
+      // A step forward never lands behind the current position.
+      if (target > current && clamped <= current) return;
+      range.video.currentTime = clamped;
+      // Recovery attempts count from where playback is now.
+      webPlayerMediaRecoverPosition = range.video.currentTime;
+      updateLiveDvr();
+    }
+
+    function goLiveEdge() {
+      const video = document.getElementById('webPlayer');
+      if (!video || !playbackMeta.isLive) return;
+      if (WATCH_PARTY_MODE) {
+        setTransientStatus('The host controls playback.');
+        return;
+      }
+      const range = liveDvrRange();
+      if (range) liveDvrSeekTo(range.end);
+      if (video.paused) {
+        const result = video.play();
+        if (result && typeof result.catch === 'function') result.catch(() => {});
+      }
+    }
+
+    // Resumes a paused live video. A pause longer than the window leaves the paused frame behind
+    // the oldest listed segment (hls.js would then jump to the live edge): it carries on from the
+    // oldest point still in the window instead.
+    function resumeLiveInWindow(video) {
+      const range = liveDvrRange();
+      if (range && Number(video.currentTime || 0) < range.start) liveDvrSeekTo(range.start);
+      const result = video.play();
+      if (result && typeof result.catch === 'function') result.catch(() => {});
+    }
+
+    function beginLiveSeekInput() {
+      liveSeekInputActive = true;
+    }
+
+    function previewLiveSeek(value) {
+      liveSeekInputActive = true;
+      const offset = Number(value);
+      liveSeekPreview = Number.isFinite(offset) ? offset : null;
+      updateLiveDvr();
+    }
+
+    function commitLiveSeek(value) {
+      liveSeekInputActive = false;
+      liveSeekPreview = null;
+      const range = liveDvrRange();
+      if (range) liveDvrSeekTo(range.start + Number(value || 0));
+      else updateLiveDvr();
+    }
+
+    function cancelLiveSeekInput() {
+      if (!liveSeekInputActive) return;
+      liveSeekInputActive = false;
+      liveSeekPreview = null;
+      updateLiveDvr();
+    }
+
+    // A fatal hls.js media error that says the browser cannot take the video: its codec, its
+    // appended data, or the decoder failing on it.
+    function isLiveCodecFailure(data, video) {
+      // Not bufferAppendError alone: a timestamp or discontinuity problem raises it too.
+      const codecDetails = ['bufferAddCodecError', 'bufferIncompatibleCodecsError', 'fragParsingError'];
+      const mediaErrorCode = Number(video?.error?.code || 0);
+      return codecDetails.includes(String(data?.details || '')) || mediaErrorCode === 3 || mediaErrorCode === 4;
+    }
+
+    // Asks the server to encode this live session's video, then reattaches at the live edge once
+    // the encode has written a few segments (the copied ones before them stay undecodable).
+    async function requestLiveVideoEncode(video) {
+      const playlistUrl = hlsInstance?.url;
+      let result = null;
+      try {
+        const response = await fetch(apiUrl(`/video/hls/${encodeURIComponent(hlsSessionId)}/live-encode`), {
+          method: 'POST',
+          credentials: 'same-origin',
+        });
+        result = response.ok ? await response.json().catch(() => null) : null;
+      } catch {
+        result = null;
+      }
+      if (!result?.switched || !playlistUrl) {
+        setStatus('Playback error. Try switching channel.', true);
+        return;
+      }
+      if (hlsInstance) hlsInstance.stopLoad();
+      // The copied segments leave the playlist once the encode starts; rejoin when it lists only
+      // encoded ones, a few of them.
+      const encodedFrom = Number(result.encodedFrom) || 0;
+      const deadline = Date.now() + LIVE_ENCODE_SWITCH_TIMEOUT_MS;
+      const poll = async () => {
+        if (document.getElementById('webPlayer') !== video) return;
+        let ready = false;
+        try {
+          const response = await fetch(playlistUrl, { credentials: 'same-origin', cache: 'no-store' });
+          const text = response.ok ? await response.text() : '';
+          const sequence = Number((/#EXT-X-MEDIA-SEQUENCE:(\d+)/.exec(text) || [])[1]);
+          ready = sequence >= encodedFrom && (text.match(/#EXTINF:/g) || []).length >= LIVE_ENCODE_REJOIN_SEGMENTS;
+        } catch {
+          ready = false;
+        }
+        if (ready) {
+          webPlayerMediaRecoverAttempts = 0;
+          // The switching notice goes once the encoded stream plays.
+          video.addEventListener('playing', () => setStatus(''), { once: true });
+          attachWebPlayer(video, playlistUrl, { liveEdge: true });
+        } else if (Date.now() < deadline) {
+          setTimeout(poll, LIVE_ENCODE_SWITCH_POLL_MS);
+        } else {
+          setStatus('Playback error. Try switching channel.', true);
+        }
+      };
+      setTimeout(poll, LIVE_ENCODE_SWITCH_POLL_MS);
+    }
+
+    function startLiveDvrTracking() {
+      // The window moves while the video is paused, when no timeupdate fires.
+      if (!playbackMeta.isLive || liveDvrTimer !== null) return;
+      liveDvrTimer = setInterval(updateLiveDvr, 1000);
+    }
+
+    function updateLiveDvr() {
+      if (!playbackMeta.isLive) return;
+      const range = liveDvrRange();
+      const seek = document.getElementById('liveSeek');
+      const spacer = document.getElementById('liveSpacer');
+      const badge = document.getElementById('time');
+      const label = document.getElementById('liveLabel');
+      // A paused player keeps its play button even when the window shrank meanwhile.
+      const paused = Boolean(document.getElementById('webPlayer')?.paused);
+      document.querySelectorAll('[data-live-dvr]').forEach((element) => {
+        element.hidden = !range && !(element.id === 'playButton' && paused);
+      });
+      if (seek) seek.hidden = !range;
+      if (spacer) spacer.hidden = Boolean(range);
+      if (!badge || !label) return;
+      if (!range) {
+        badge.classList.remove('is-dvr', 'is-behind');
+        badge.removeAttribute('role');
+        badge.removeAttribute('tabindex');
+        badge.removeAttribute('title');
+        label.textContent = 'LIVE';
+        return;
+      }
+      const span = range.end - range.start;
+      const position = liveSeekPreview !== null ? range.start + liveSeekPreview : Number(range.video.currentTime || 0);
+      const behind = Math.max(0, range.end - position);
+      if (seek && !liveSeekInputActive) {
+        seek.max = String(Math.max(1, Math.floor(span)));
+        seek.value = String(Math.floor(Math.max(0, Math.min(span, position - range.start))));
+      }
+      const atLive = behind < range.tolerance && !range.video.paused;
+      badge.classList.add('is-dvr');
+      badge.classList.toggle('is-behind', !atLive);
+      badge.setAttribute('role', 'button');
+      badge.setAttribute('tabindex', '0');
+      badge.title = atLive ? 'Live' : 'Back to live';
+      label.textContent = atLive ? 'LIVE' : `−${formatTime(Math.round(behind))}`;
     }
 
     function beginSeekInput() {
@@ -3161,6 +3418,7 @@
       }
       // Live playback shows a static "LIVE" badge in #time — don't overwrite it.
       if (time && !playbackMeta.isLive) time.textContent = `${formatTime(controlTime)} / ${formatDurationLabel(duration)}`;
+      if (playbackMeta.isLive) updateLiveDvr();
       const volumeSlider = document.getElementById('volumeSlider');
       if (volumeSlider && document.activeElement !== volumeSlider) {
         volumeSlider.value = String(video.muted ? 0 : Number(video.volume || 0));
@@ -3175,7 +3433,22 @@
     function togglePlayback() {
       const video = document.getElementById('webPlayer');
       if (!video) return;
-      if (playbackMeta.isLive) return;
+      if (playbackMeta.isLive) {
+        if (WATCH_PARTY_MODE) {
+          setTransientStatus('The host controls playback.');
+          return;
+        }
+        // Live pauses only within a timeshift window; resuming carries on from the paused frame,
+        // also when the window has shrunk below the controls' minimum meanwhile.
+        if (!liveDvrRange() && !video.paused) return;
+        if (video.paused) {
+          resumeLiveInWindow(video);
+        } else {
+          video.pause();
+        }
+        updateControls();
+        return;
+      }
       if (WATCH_PARTY_MODE) {
         setTransientStatus('The host controls playback.');
         return;

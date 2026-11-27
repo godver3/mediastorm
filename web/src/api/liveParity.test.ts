@@ -92,6 +92,8 @@ describe('catch-up', () => {
     expect(q.liveSourceUrl).toBe('http://provider/timeshift/x.ts');
     expect(q.title).toBe('News');
     expect(q.format).toBe('hls');
+    expect(q.timeshift).toBeUndefined(); // a replay starts at the programme, not behind a window
+    expect(q.videoCopy).toBeUndefined(); // a switch to the encode would restart the archive
   });
 });
 

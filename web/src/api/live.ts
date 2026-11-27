@@ -90,6 +90,8 @@ export interface LiveStart {
   playlistUrl?: string;
   stremioStreamIndex?: number;
   stremioStreamIndexes?: number[];
+  /** Nonzero when the session keeps a timeshift window the player can rewind in. */
+  timeshiftWindowSeconds?: number;
 }
 
 // ---------- mappers ----------
@@ -394,6 +396,12 @@ export async function saveChannelLists(profileId: string, lists: LiveChannelList
 
 // ---------- tuning ----------
 
+/** Whether this browser offers Media Source Extensions, which the web player's hls.js needs. */
+export function browserHasMediaSource(): boolean {
+  const g = globalThis as { MediaSource?: unknown; ManagedMediaSource?: unknown };
+  return typeof g.MediaSource === 'function' || typeof g.ManagedMediaSource === 'function';
+}
+
 /** The /api/live/hls/start query for the web player (always an HLS session, as Expo web). */
 export function liveStartQuery(
   channel: LiveChannel,
@@ -410,7 +418,13 @@ export function liveStartQuery(
     channelId: channel.playbackId ?? channel.id,
     channelName: channel.name,
     liveSourceUrl: channel.url,
+    // Keep the admin's timeshift window so the player can rewind (no window: an ordinary tune).
+    timeshift: '1',
   };
+  // Browser-safe H.264 is copied, not encoded, where the player runs hls.js on Media Source
+  // Extensions: it switches the session to the encode when its browser cannot decode the copy
+  // after all. Native HLS playback (Safari without MSE) has no such fallback and keeps the encode.
+  if (browserHasMediaSource()) q.videoCopy = '1';
   if (opts.profileName) q.profileName = opts.profileName;
   if (channel.sourceId) {
     q.sourceId = channel.sourceId;
@@ -492,6 +506,10 @@ export function catchupStartQuery(
   });
   // The archive is a recording of the channel, not the channel's live URL.
   q.liveSourceUrl = archive.url;
+  // It plays from the programme's start; there is nothing to rewind into ahead of it.
+  delete q.timeshift;
+  // A switch to the encode would reopen the archive at the programme's start: keep the encode.
+  delete q.videoCopy;
   return q;
 }
 
@@ -521,6 +539,8 @@ export function livePlaybackParams(channel: LiveChannel, start: LiveStart) {
     stremioStreamIndexes: start.stremioStreamIndexes?.length
       ? JSON.stringify(start.stremioStreamIndexes)
       : undefined,
+    // The player shows its rewind controls only for a timeshift session.
+    liveTimeshift: !start.isDirect && (start.timeshiftWindowSeconds ?? 0) > 0 ? '1' : undefined,
   };
 }
 

@@ -90,6 +90,7 @@ describe('live mappers', () => {
 
 describe('live tuning', () => {
   it('builds the web hls/start query', () => {
+    vi.stubGlobal('MediaSource', class {});
     const q = liveStartQuery(channel, 'p1', { programTitle: 'News', profileName: 'Liam' });
     expect(q).toMatchObject({
       url: channel.url,
@@ -102,7 +103,19 @@ describe('live tuning', () => {
       itemId: 'bbc1.uk',
       profileName: 'Liam',
       liveChannelLogo: channel.logo,
+      timeshift: '1',
+      videoCopy: '1',
     });
+    vi.unstubAllGlobals();
+  });
+
+  it('asks for the video copy only where hls.js has Media Source Extensions', () => {
+    vi.stubGlobal('MediaSource', undefined);
+    vi.stubGlobal('ManagedMediaSource', undefined);
+    expect(liveStartQuery(channel, 'p1').videoCopy).toBeUndefined();
+    vi.stubGlobal('ManagedMediaSource', class {});
+    expect(liveStartQuery(channel, 'p1').videoCopy).toBe('1');
+    vi.unstubAllGlobals();
   });
 
   it('hands an HLS session to playback.html', () => {
@@ -122,6 +135,13 @@ describe('live tuning', () => {
     expect(direct.movie).toBe('/live/stream?x=1');
     expect(direct.hlsSessionId).toBeUndefined();
     expect(() => livePlaybackParams(channel, {})).toThrow();
+  });
+
+  it('tells the player whether the session keeps a timeshift window', () => {
+    const playlist = { sessionId: 'abc', playlistUrl: '/video/hls/abc/stream.m3u8' };
+    expect(livePlaybackParams(channel, { ...playlist, timeshiftWindowSeconds: 3600 }).liveTimeshift).toBe('1');
+    expect(livePlaybackParams(channel, { ...playlist, timeshiftWindowSeconds: 0 }).liveTimeshift).toBeUndefined();
+    expect(livePlaybackParams(channel, playlist).liveTimeshift).toBeUndefined();
   });
 
   it('explains provider stream limits', () => {

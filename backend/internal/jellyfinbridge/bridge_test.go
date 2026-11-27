@@ -812,6 +812,10 @@ func TestLiveTV(t *testing.T) {
 	if startQuery.Get("timeshift") != "1" || startQuery.Get("url") != "http://tv.example/1.ts" {
 		t.Fatalf("live HLS start query = %v", startQuery)
 	}
+	// jellyfin-web's live seek bar counts media time from the moment playback started: no backlog.
+	if startQuery.Get("timeshiftBacklog") != "0" {
+		t.Fatalf("live HLS start asks for the source's DVR backlog: %v", startQuery)
+	}
 	// Full pass-through keeps the channel's own audio: no timeshift.
 	h.srv.deps.Settings = func() (config.JellyfinBridgeSettings, error) {
 		return config.JellyfinBridgeSettings{DisableVideoTranscoding: true, DisableAudioTranscoding: true}, nil
