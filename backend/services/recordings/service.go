@@ -949,11 +949,13 @@ func (s *Service) startRecording(recording models.Recording) {
 	// not change: once something is recorded, a retry keeps the chosen variant.
 	var streams recordingStreamChoice
 	var recorded int64
-	emptyVariant := 0
 	// Where the recording should begin; a late one looks back in the source's window (backfill.go).
 	// Its content is then followed (-progress): a backfilled attempt that ends before its content
 	// reaches the stop time is continued from there while the window still has it, until deadline.
 	wantStart := recording.StartAt.Add(-time.Duration(recording.PaddingBeforeSeconds) * time.Second)
+	// Only a recording whose first attempt starts late looks back: an on-time one whose first
+	// attempts fail must not turn "late" after recordingBackfillMinLate and fetch the window.
+	lateAtStart := time.Since(wantStart) >= recordingBackfillMinLate
 	deadline := stopAt
 	lookedBack, backfillPlanned := false, false
 	var contentStart, resumeAt, lastResume time.Time
@@ -983,8 +985,10 @@ func (s *Service) startRecording(recording models.Recording) {
 		var planErr error
 		switch {
 		case resuming:
-			backfill, planErr = planRecordingBackfill(lookupCtx, recording.SourceURL, streams, resumeAt)
-		case recorded == 0 && !backfillPlanned:
+			// No lead on a resume: starting earlier than where the content ended would append
+			// those segments a second time.
+			backfill, planErr = planRecordingBackfillLead(lookupCtx, recording.SourceURL, streams, resumeAt, 0)
+		case recorded == 0 && !backfillPlanned && lateAtStart:
 			// Once: a backfilled start that records nothing is not tried again (a window that did
 			// not load is asked again on the next attempt).
 			backfill, planErr = planRecordingBackfill(lookupCtx, recording.SourceURL, streams, wantStart)
@@ -1015,6 +1019,9 @@ func (s *Service) startRecording(recording models.Recording) {
 			if content == nil {
 				content = s.followContent(recording.ID)
 				deadline = backfill.deadline(stopAt)
+			} else if d := backfill.deadline(stopAt); d.After(deadline) {
+				// A resume planned from a later point is further behind: allow it the time it needs.
+				deadline = d
 			}
 			if streams.variant == "" && !streams.pictureAndSound {
 				// Everything (-map 0) may hold a stream without packets (subtitles, data), which
@@ -1053,24 +1060,14 @@ func (s *Service) startRecording(recording models.Recording) {
 			// The file has this layout now.
 			streams = attemptStreams
 		}
-		if backfill.active() && !result.stoppedAtSchedule && result.written > 0 && result.content > 0 {
+		if backfill.active() && !result.stoppedAtSchedule && !result.jumped && result.written > 0 && result.content > 0 {
 			// Ended before its content reached the stop time: the next attempt carries on there,
 			// unless this one got no further than the last (then it carries on live).
 			if next := backfill.from.Add(result.content); next.After(lastResume) {
 				resumeAt, lastResume = next, next
 			}
 		}
-		if result.mapsMatchedNothing && streams.variant != "" {
-			emptyVariant++
-			// FFmpeg found nothing in the chosen variant. Before anything is recorded: everything,
-			// as before. Afterwards the file has the variant's layout: look it up again, and give up
-			// on it only when it keeps coming out empty.
-			if recorded == 0 || emptyVariant >= 2 {
-				streams = recordingStreamChoice{maps: recordingAllStreams, final: true}
-			}
-		} else {
-			emptyVariant = 0
-		}
+		streams = afterEmptyVariant(streams, result.mapsMatchedNothing, recorded)
 		finishedAt := time.Now().UTC()
 		if ctx.Err() != nil {
 			s.handleInterruptedRecording(recording.ID, endOf(finishedAt))
@@ -1079,8 +1076,10 @@ func (s *Service) startRecording(recording models.Recording) {
 		if result.stoppedAtSchedule {
 			// Wall-clock stop reached: this attempt finished the recording,
 			// unless it was a last-second retry that captured nothing.
+			// A late attempt cut off by its deadline before its content reached the stop time
+			// carries an error: the recording is missing its end.
 			if result.written > 0 {
-				lastErrMsg = ""
+				lastErrMsg = result.errMsg
 			}
 			break
 		}
@@ -1188,6 +1187,7 @@ type recordingAttemptResult struct {
 	content time.Duration
 	// reachedContent: a backfilled attempt whose content reached the stop time.
 	reachedContent bool
+	jumped         bool // content timestamps jumped: content is what it ran, and it carries on live
 }
 
 // runRecordingAttempt captures the source until stopAt (wall clock) or until
@@ -1225,23 +1225,28 @@ func (s *Service) runRecordingAttempt(ctx context.Context, recording models.Reco
 			args = append(args, "-progress", "pipe:3", "-stats_period", "1")
 		}
 	}
-	args = append(args,
-		"-loglevel", "warning",
+	args = append(args, "-loglevel", "warning")
+	// An adaptive HLS channel: the chosen variant's media playlist and its audio renditions as
+	// inputs (variant.go), so a master that changed since cannot swap the variant. Input options
+	// apply to the next input only: every input gets them.
+	inputOptions := []string{
 		"-protocol_whitelist", "file,http,https,pipe,tcp,tls,crypto,udp,rtp,rtmp",
 		"-rw_timeout", fmt.Sprintf("%d", recordingReadTimeout.Microseconds()),
 		"-reconnect", "1",
 		"-reconnect_streamed", "1",
 		"-reconnect_delay_max", "3",
-	)
-	// An adaptive HLS channel: only its best variant with its own audio tracks (variant.go), read
-	// with the User-Agent the variant was chosen with.
-	if streams.variant != "" {
-		args = append(args, "-user_agent", recordingMasterUA)
 	}
 	if backfill.active() {
-		args = append(args, "-live_start_index", strconv.Itoa(backfill.liveStartIndex))
+		inputOptions = append(inputOptions, "-live_start_index", strconv.Itoa(backfill.liveStartIndex))
 	}
-	args = append(args, "-i", recording.SourceURL)
+	inputs := streams.inputs
+	if len(inputs) == 0 {
+		inputs = []string{recording.SourceURL}
+	}
+	for _, input := range inputs {
+		args = append(args, inputOptions...)
+		args = append(args, "-i", input)
+	}
 	args = append(args, streams.args()...)
 	if backfill.active() {
 		args = append(args, "-t", strconv.FormatFloat(backfill.contentLimit(stopAt).Seconds(), 'f', 3, 64))
@@ -1279,16 +1284,23 @@ func (s *Service) runRecordingAttempt(ctx context.Context, recording models.Reco
 	followed := followAttempt(cmd, progressRead, progressWrite, content, backfill, stopAt)
 	waitErr := cmd.Wait()
 	got, reached := followed()
+	jumped := false
+	var limit time.Duration
+	if backfill.active() {
+		limit = backfill.contentLimit(stopAt) - recordingBackfillReachSlack
+	}
 	if reached && time.Until(stopAt) > 2*recordingBackfillClockSlack {
 		// Content cannot run that far ahead of the clock: its timestamps jumped. Not done; the
 		// next attempt carries on live.
 		log.Printf("[recordings] attempt id=%s attempt=%d: content reached the stop time %s early (timestamps jumped)",
 			recording.ID, attempt, time.Until(stopAt).Round(time.Second))
 		reached = false
+		ran := time.Since(startedAt)
 		if content != nil {
 			// It holds about as much as it ran, not what the jumped timestamps say.
-			content.done.Add(int64((time.Since(startedAt) - got) / time.Microsecond))
+			content.done.Add(int64((ran - got) / time.Microsecond))
 		}
+		got, jumped = ran, true
 	}
 
 	written := int64(0)
@@ -1308,6 +1320,14 @@ func (s *Service) runRecordingAttempt(ctx context.Context, recording models.Reco
 		return recordingAttemptResult{stoppedAtSchedule: true, written: written, content: got, reachedContent: true}
 	}
 	if ctx.Err() == nil && errors.Is(attemptCtx.Err(), context.DeadlineExceeded) {
+		if backfill.active() && got < limit {
+			// A late attempt out of time before its content reached the stop time: the end is
+			// missing, and the recording says so.
+			msg := fmt.Sprintf("recording ran out of time %s before its content reached the stop time", (limit - got).Round(time.Second))
+			log.Printf("[recordings] attempt timed out id=%s attempt=%d elapsed=%s bytes=%d content=%s: %s",
+				recording.ID, attempt, elapsed, written, got.Round(time.Second), msg)
+			return recordingAttemptResult{stoppedAtSchedule: true, written: written, content: got, errMsg: msg}
+		}
 		log.Printf("[recordings] attempt reached stop time id=%s attempt=%d elapsed=%s bytes=%d",
 			recording.ID, attempt, elapsed, written)
 		return recordingAttemptResult{stoppedAtSchedule: true, written: written, content: got}
@@ -1320,7 +1340,7 @@ func (s *Service) runRecordingAttempt(ctx context.Context, recording models.Reco
 		// last warning (often a harmless one about the source) is not why.
 		log.Printf("[recordings] attempt stopped id=%s attempt=%d elapsed=%s bytes=%d: recording cancelled or service stopping",
 			recording.ID, attempt, elapsed, written)
-		return recordingAttemptResult{err: waitErr, errMsg: errMsg, written: written, mapsMatchedNothing: mapsMatchedNothing, content: got}
+		return recordingAttemptResult{err: waitErr, errMsg: errMsg, written: written, mapsMatchedNothing: mapsMatchedNothing, content: got, jumped: jumped}
 	}
 	exitCode := -1
 	if cmd.ProcessState != nil {
@@ -1328,7 +1348,7 @@ func (s *Service) runRecordingAttempt(ctx context.Context, recording models.Reco
 	}
 	log.Printf("[recordings] attempt ended early id=%s attempt=%d exit=%d elapsed=%s bytes=%d remaining=%s stderr=%q",
 		recording.ID, attempt, exitCode, elapsed, written, time.Until(stopAt).Round(time.Second), errMsg)
-	return recordingAttemptResult{err: waitErr, errMsg: errMsg, written: written, mapsMatchedNothing: mapsMatchedNothing, content: got}
+	return recordingAttemptResult{err: waitErr, errMsg: errMsg, written: written, mapsMatchedNothing: mapsMatchedNothing, content: got, jumped: jumped}
 }
 
 // redactSourceURL keeps only scheme and host: IPTV source URLs often carry
@@ -1461,4 +1481,15 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// afterEmptyVariant is the choice after an attempt in which FFmpeg found nothing in the chosen
+// variant. Before anything is recorded: everything, as before. Once something is recorded the file
+// has the variant's layout and attempts append to it, so the previous maps are kept (looked up
+// again on the next attempt): falling back to -map 0 would append a different stream layout.
+func afterEmptyVariant(streams recordingStreamChoice, mapsMatchedNothing bool, recorded int64) recordingStreamChoice {
+	if mapsMatchedNothing && streams.variant != "" && recorded == 0 {
+		return recordingStreamChoice{maps: recordingAllStreams, final: true}
+	}
+	return streams
 }

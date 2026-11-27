@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -93,14 +94,19 @@ func TestRecordingStreamMaps(t *testing.T) {
 	for path, want := range map[string]string{
 		"/stream":       "-map 0",
 		"/missing":      "-map 0",
-		"/redirect":     "-map 0:p:1:v -map 0:p:1:a?",
-		"/master.m3u8":  "-map 0:p:1:v -map 0:p:1:a?",
-		"/broken.m3u8":  "-map 0:p:0:v -map 0:p:0:a?", // the best variant does not load: the next one
-		"/nohead":       "-map 0:p:1:v -map 0:p:1:a?",
+		"/redirect":     "-map 0:v -map 0:a? < /high.m3u8",
+		"/master.m3u8":  "-map 0:v -map 0:a? < /high.m3u8",
+		"/broken.m3u8":  "-map 0:v -map 0:a? < /low.m3u8", // the best variant does not load: the next one
+		"/nohead":       "-map 0:v -map 0:a? < /high.m3u8",
 		"/low.m3u8":     "-map 0", // a media playlist
 		"/stream?x=.ts": "-map 0",
 	} {
-		if got := strings.Join(chooseRecordingStreams(context.Background(), ts.URL+path, recordingStreamChoice{}, false).args(), " "); got != want {
+		choice := chooseRecordingStreams(context.Background(), ts.URL+path, recordingStreamChoice{}, false)
+		got := strings.Join(choice.args(), " ")
+		if len(choice.inputs) > 0 {
+			got += " < " + strings.TrimPrefix(strings.Join(choice.inputs, " "), ts.URL)
+		}
+		if got != want {
 			t.Errorf("%s: %q, want %q", path, got, want)
 		}
 	}
@@ -138,8 +144,12 @@ func TestRecordingStreamsKeepLayout(t *testing.T) {
 	ctx := context.Background()
 	source := ts.URL + "/master.m3u8"
 	join := func(c recordingStreamChoice) string { return strings.Join(c.args(), " ") }
+	// FFmpeg reads the chosen variant's own playlist, never the master (which may change).
+	from := func(c recordingStreamChoice, variant string) bool {
+		return join(c) == "-map 0:v -map 0:a?" && c.variant == ts.URL+variant && len(c.inputs) == 1 && c.inputs[0] == c.variant
+	}
 	first := chooseRecordingStreams(ctx, source, recordingStreamChoice{}, false)
-	if join(first) != "-map 0:p:1:v -map 0:p:1:a?" || first.variant != ts.URL+"/high.m3u8?t=1" {
+	if !from(first, "/high.m3u8?t=1") {
 		t.Fatalf("first: %q %q", join(first), first.variant)
 	}
 	if n := requests.Load(); n != 2 {
@@ -148,10 +158,10 @@ func TestRecordingStreamsKeepLayout(t *testing.T) {
 	// The master now lists a better variant first and the chosen one second, with new tokens.
 	master.Store("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=20\nnew.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=9\nhigh.m3u8?t=2\n#EXT-X-STREAM-INF:BANDWIDTH=1\nlow.m3u8?t=2\n")
 	retry := chooseRecordingStreams(ctx, source, first, true)
-	if join(retry) != "-map 0:p:1:v -map 0:p:1:a?" {
+	if !from(retry, "/high.m3u8?t=2") {
 		t.Errorf("retry with data: %q, want the same variant at its new position", join(retry))
 	}
-	if fresh := chooseRecordingStreams(ctx, source, first, false); join(fresh) != "-map 0:p:1:v -map 0:p:1:a?" {
+	if fresh := chooseRecordingStreams(ctx, source, first, false); !from(fresh, "/high.m3u8?t=2") {
 		t.Errorf("retry without data: %q, want the previous variant while it loads", join(fresh))
 	}
 	// The master is down: keep the choice once there is data, everything before.
@@ -186,25 +196,25 @@ func TestRecordingStreamsKeepLayout(t *testing.T) {
 		t.Errorf("another rung with data: %q %q, want the previous choice", join(kept), kept.variant)
 	}
 	master.Store("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nlow.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=9\nnew.m3u8\n")
-	if moved := chooseRecordingStreams(ctx, source, retry, true); join(moved) != "-map 0:p:1:v -map 0:p:1:a?" || moved.variant != ts.URL+"/new.m3u8" {
+	if moved := chooseRecordingStreams(ctx, source, retry, true); !from(moved, "/new.m3u8") {
 		t.Errorf("identical variant from another CDN: %q %q", join(moved), moved.variant)
 	}
 	// The variant moved and its playlist does not load right now: still its new position (FFmpeg
 	// retries it), not the old one.
 	gone := recordingStreamChoice{maps: []string{"-map", "0:p:0:v", "-map", "0:p:0:a?"}, variant: ts.URL + "/gone.m3u8", signature: "9|||0", playlist: source}
 	master.Store("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nlow.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=5\nnew.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=9\ngone.m3u8\n")
-	if got := chooseRecordingStreams(ctx, source, gone, true); join(got) != "-map 0:p:2:v -map 0:p:2:a?" {
+	if got := chooseRecordingStreams(ctx, source, gone, true); !from(got, "/gone.m3u8") {
 		t.Errorf("moved variant whose playlist fails: %q", join(got))
 	}
 	// Its CDN is down but still listed, and the same picture comes from another one: that one.
 	master.Store("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=9\ngone.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=9\nhigh.m3u8\n")
-	if got := chooseRecordingStreams(ctx, source, gone, true); join(got) != "-map 0:p:1:v -map 0:p:1:a?" {
+	if got := chooseRecordingStreams(ctx, source, gone, true); !from(got, "/high.m3u8") {
 		t.Errorf("CDN down: %q, want the same picture from the other CDN", join(got))
 	}
 	// Variants that differ only in their query: the URL without query is no identity.
 	master.Store("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=9\nlow.m3u8?q=hi\n#EXT-X-STREAM-INF:BANDWIDTH=5\nlow.m3u8?q=mid\n")
 	prev := recordingStreamChoice{maps: []string{"-map", "0:p:7:v"}, variant: ts.URL + "/low.m3u8?q=hi&t=1", signature: "9|||0", playlist: source}
-	if got := chooseRecordingStreams(ctx, source, prev, true); join(got) != "-map 0:p:0:v -map 0:p:0:a?" {
+	if got := chooseRecordingStreams(ctx, source, prev, true); !from(got, "/low.m3u8?q=hi") {
 		t.Errorf("query ladder: %q, want the variant with the same signature", join(got))
 	}
 	prev.signature = "7|||0"
@@ -386,5 +396,36 @@ func TestRecordingTakesBestVariantEndToEnd(t *testing.T) {
 	cdnADown.Store(true)
 	if video, audio, languages := record(); video != 1 || audio != 2 {
 		t.Fatalf("with CDN A down: %d video and %d audio streams, want 1 and 2:\n%s", video, audio, languages)
+	}
+}
+
+// A variant with audio renditions: FFmpeg gets the variant's media playlist and each rendition of
+// its group as inputs, with a map per input; renditions of other groups stay out.
+func TestVariantStreamsReadTheVariantsOwnPlaylists(t *testing.T) {
+	body := "#EXTM3U\n" +
+		`#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="a",NAME="deu",URI="a/deu.m3u8"` + "\n" +
+		`#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="a",NAME="AD",URI="a/ad.m3u8"` + "\n" +
+		`#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="b",NAME="deu",URI="b/deu.m3u8"` + "\n" +
+		`#EXT-X-STREAM-INF:BANDWIDTH=9,RESOLUTION=1280x720,AUDIO="b"` + "\nb/v.m3u8\n" +
+		`#EXT-X-STREAM-INF:BANDWIDTH=9,RESOLUTION=1280x720,AUDIO="a"` + "\na/v.m3u8\n"
+	master, _ := url.Parse("http://cdn.example/live/master.m3u8")
+	variants := rankedHLSVariants(body)
+	var chosen hlsVariant
+	for _, v := range variants {
+		if v.uri == "a/v.m3u8" {
+			chosen = v
+		}
+	}
+	chosen.uri = master.ResolveReference(&url.URL{Path: chosen.uri}).String()
+	got := variantStreams(body, master, chosen)
+	wantInputs := "http://cdn.example/live/a/v.m3u8 http://cdn.example/live/a/deu.m3u8 http://cdn.example/live/a/ad.m3u8"
+	if strings.Join(got.inputs, " ") != wantInputs {
+		t.Errorf("inputs %q, want %q", got.inputs, wantInputs)
+	}
+	if maps := strings.Join(got.args(), " "); maps != "-map 0:v -map 0:a? -map 1:a? -map 2:a?" {
+		t.Errorf("maps %q", maps)
+	}
+	if strings.Contains(strings.Join(got.args(), " "), ":p:") {
+		t.Error("maps by program position: the master's order may change before FFmpeg reads it")
 	}
 }

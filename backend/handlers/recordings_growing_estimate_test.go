@@ -328,3 +328,17 @@ func TestStreamGrowingRecordingEstimatedEndToEnd(t *testing.T) {
 	}
 	t.Logf("played %.1fs; ffmpeg: %v %s", played, playErr, strings.TrimSpace(stderr.String()))
 }
+
+// The handler asks its service for a recording's content directly: a service that follows it
+// is heard, one that does not reports nothing followed.
+func TestRecordedContentComesFromTheServiceInterface(t *testing.T) {
+	plain := NewRecordingsHandler(&fakeRecordingService{}, nil)
+	if content, followed := plain.recordedContent("x"); followed || content != 0 {
+		t.Fatalf("plain service: %v %v", content, followed)
+	}
+	f := &followedRecordingService{}
+	f.content.Store(int64(3 * time.Minute))
+	if content, followed := NewRecordingsHandler(f, nil).recordedContent("x"); !followed || content != 3*time.Minute {
+		t.Fatalf("followed service: %v %v", content, followed)
+	}
+}

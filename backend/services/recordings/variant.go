@@ -38,7 +38,9 @@ const (
 	recordingChoiceBudget   = 6 * time.Second // the first attempt
 	recordingRetryBudget    = 3 * time.Second // a retry, while the recording has a gap
 	recordingMasterLimit    = 1 << 20
-	recordingMasterUA       = "VLC/3.0.20 LibVLC/3.0.20"
+	// recordingMasterUA: the lookups ask as FFmpeg does (its default Lavf User-Agent; FFmpeg is
+	// given none), so a provider that allow-lists Lavf answers both alike.
+	recordingMasterUA = "Lavf/61.7.100"
 )
 
 // recordingHTTPClient keeps no connection open after a request, also after redirects: FFmpeg's
@@ -60,11 +62,12 @@ var recordingMediaExtensions = map[string]bool{
 // recordingStreamChoice is what a recording maps from its source.
 type recordingStreamChoice struct {
 	maps            []string
-	pictureAndSound bool   // everything's picture and sound only (a recording that looked back)
-	variant         string // the chosen variant's playlist URL; "" for all streams
-	signature       string // the chosen variant's BANDWIDTH, RESOLUTION, CODECS and audio renditions
-	playlist        string // where the master was read: the source is a playlist (no HEAD on a retry)
-	final           bool   // all streams for good: no playlist, or FFmpeg found nothing in the variant
+	pictureAndSound bool     // everything's picture and sound only (a recording that looked back)
+	variant         string   // the chosen variant's playlist URL; "" for all streams
+	inputs          []string // FFmpeg's inputs: the variant's media playlist, then its audio renditions; none: the source
+	signature       string   // the chosen variant's BANDWIDTH, RESOLUTION, CODECS and audio renditions
+	playlist        string   // where the master was read: the source is a playlist (no HEAD on a retry)
+	final           bool     // all streams for good: no playlist, or FFmpeg found nothing in the variant
 }
 
 func (c recordingStreamChoice) args() []string {
@@ -148,12 +151,7 @@ func chooseRecordingStreams(ctx context.Context, sourceURL string, previous reco
 		}
 	}
 	choose := func(variant hlsVariant) recordingStreamChoice {
-		return recordingStreamChoice{
-			maps:      []string{"-map", fmt.Sprintf("0:p:%d:v", variant.program), "-map", fmt.Sprintf("0:p:%d:a?", variant.program)},
-			variant:   variant.uri,
-			signature: variant.signature,
-			playlist:  master.String(),
-		}
+		return variantStreams(body, master, variant)
 	}
 	if keepLayout {
 		// The file has the previous variant's layout. That variant, wherever the master lists it
@@ -430,4 +428,22 @@ func hlsAttribute(list, key string) string {
 		}
 	}
 	return ""
+}
+
+// variantStreams records a variant from its own playlists: FFmpeg reads the variant's media
+// playlist and its audio renditions as inputs rather than the master, which it would fetch again
+// itself (a master that changed in between could put another variant at the chosen position).
+func variantStreams(masterBody string, master *url.URL, variant hlsVariant) recordingStreamChoice {
+	inputs := append([]string{variant.uri}, hlsAudioRenditions(masterBody, master, variant.uri)...)
+	maps := []string{"-map", "0:v", "-map", "0:a?"} // the variant's picture and any sound muxed in
+	for i := 1; i < len(inputs); i++ {
+		maps = append(maps, "-map", fmt.Sprintf("%d:a?", i))
+	}
+	return recordingStreamChoice{
+		maps:      maps,
+		variant:   variant.uri,
+		inputs:    inputs,
+		signature: variant.signature,
+		playlist:  master.String(),
+	}
 }

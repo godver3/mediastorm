@@ -74,6 +74,12 @@ const recordingBackfillPlaylistLimit = 16 << 20
 // playlist. Nothing when the recording is on time, the source is no live HLS playlist, or its
 // window does not reach back; err when the playlist did not load.
 func planRecordingBackfill(ctx context.Context, sourceURL string, streams recordingStreamChoice, want time.Time) (recordingBackfill, error) {
+	return planRecordingBackfillLead(ctx, sourceURL, streams, want, recordingBackfillLead)
+}
+
+// planRecordingBackfillLead is planRecordingBackfill starting lead earlier (none on a resume: the
+// content up to want is in the file already).
+func planRecordingBackfillLead(ctx context.Context, sourceURL string, streams recordingStreamChoice, want time.Time, lead time.Duration) (recordingBackfill, error) {
 	if time.Since(want) < recordingBackfillMinLate {
 		return recordingBackfill{}, nil
 	}
@@ -106,7 +112,7 @@ func planRecordingBackfill(ctx context.Context, sourceURL string, streams record
 		// elsewhere.
 		return recordingBackfill{}, nil
 	}
-	return backfillFromPlaylist(body, time.Now(), want), nil
+	return backfillFromPlaylistLead(body, time.Now(), want, lead), nil
 }
 
 // recordingBackfillBudget bounds reading the source's window (a long one is megabytes).
@@ -206,6 +212,11 @@ func firstHLSVariant(playlist string) string {
 // holds it, counted from the playlist's end for FFmpeg, and when that segment began. A window
 // that does not reach back that far starts with its oldest segment.
 func backfillFromPlaylist(playlist string, fetchedAt, want time.Time) recordingBackfill {
+	return backfillFromPlaylistLead(playlist, fetchedAt, want, recordingBackfillLead)
+}
+
+// backfillFromPlaylistLead is backfillFromPlaylist starting up to leadTime earlier.
+func backfillFromPlaylistLead(playlist string, fetchedAt, want time.Time, leadTime time.Duration) recordingBackfill {
 	type segment struct {
 		duration float64
 		dated    time.Time
@@ -278,8 +289,8 @@ func backfillFromPlaylist(playlist string, fetchedAt, want time.Time) recordingB
 		target = segments[last].duration
 	}
 	lead := 0
-	if target > 0 {
-		lead = int(math.Ceil(recordingBackfillLead.Seconds() / target))
+	if target > 0 && leadTime > 0 {
+		lead = int(math.Ceil(leadTime.Seconds() / target))
 	}
 	// FFmpeg's default starts three segments before the end: looking back must reach further.
 	if len(segments)-first <= 3 {
@@ -384,6 +395,7 @@ func followAttempt(cmd *exec.Cmd, read, write *os.File, content *recordedContent
 	var mu sync.Mutex
 	var stop *time.Timer
 	stalled := false
+	began := time.Now()
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -402,7 +414,10 @@ func followAttempt(cmd *exec.Cmd, read, write *os.File, content *recordedContent
 				}
 				mu.Lock()
 				if limit > 0 && !reported && stop == nil && time.Now().After(stopAt) && time.Since(grew) >= recordingBackfillStallAfter {
-					stalled = true
+					// Stood still with no content report: counted as reaching the stop time only if
+					// it ran at least as long as the content it should hold; otherwise it ended
+					// early (what it caught up cannot be told without reports).
+					stalled = time.Since(began) >= limit
 					stop = time.AfterFunc(0, func() { _ = cmd.Process.Signal(os.Interrupt) })
 				}
 				mu.Unlock()

@@ -41,6 +41,8 @@ func (f *fakeRecordingService) CreateTimeBlock(req models.CreateTimeBlockRecordi
 
 func (f *fakeRecordingService) Cancel(id string) error { return nil }
 
+func (f *fakeRecordingService) RecordedContent(string) (time.Duration, bool) { return 0, false }
+
 func (f *fakeRecordingService) Delete(id string) error { return nil }
 
 type fakeRecordingUsersProvider struct {

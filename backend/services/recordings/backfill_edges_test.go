@@ -14,8 +14,9 @@ import (
 )
 
 // FFmpeg reports no content while a mapped stream has no packets (out_time N/A): an output that
-// stands still after the stop time has reached it, and FFmpeg is stopped then, not at the
-// extended deadline.
+// stands still after the stop time is stopped then, not at the extended deadline. Having run far
+// shorter than the content it should hold, it ended early: the recording is flagged, not
+// completed with its end missing.
 func TestLateRecordingStopsWhenItsOutputStandsStill(t *testing.T) {
 	originalStall := recordingBackfillStallAfter
 	recordingBackfillStallAfter = 300 * time.Millisecond
@@ -32,7 +33,9 @@ done
 
 	svc.startRecording(recording)
 
-	finishedRecording(t, svc, recording.ID)
+	if latest, _ := svc.Get(recording.ID); latest.Status != models.RecordingStatusFailed || latest.OutputSizeBytes == 0 {
+		t.Fatalf("recording %q (%q, %d bytes), want flagged with its output kept", latest.Status, latest.Error, latest.OutputSizeBytes)
+	}
 	if took := time.Since(started); took > 5*time.Second {
 		t.Fatalf("recording took %s, want it stopped shortly after the stop time", took)
 	}

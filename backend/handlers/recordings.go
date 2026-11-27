@@ -33,6 +33,9 @@ type recordingService interface {
 	CreateTimeBlock(req models.CreateTimeBlockRecordingRequest) (models.Recording, error)
 	Cancel(id string) error
 	Delete(id string) error
+	// RecordedContent is how much content a running recording holds when the service follows it
+	// (one catching up from its source's DVR window); followed is false otherwise.
+	RecordedContent(id string) (content time.Duration, followed bool)
 }
 
 type recordingRuleService interface {

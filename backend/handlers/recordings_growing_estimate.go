@@ -91,12 +91,7 @@ func estimatedRecordingSize(rec models.Recording, size int64, now time.Time, con
 // follows it (followed; 0 until FFmpeg's first report): one catching up from its source's DVR
 // window fills faster than the clock runs.
 func (h *RecordingsHandler) recordedContent(id string) (content time.Duration, followed bool) {
-	if follower, ok := h.service.(interface {
-		RecordedContent(string) (time.Duration, bool)
-	}); ok {
-		return follower.RecordedContent(id)
-	}
-	return 0, false
+	return h.service.RecordedContent(id)
 }
 
 // offeredRecordingSize is estimatedRecordingSize, never smaller than what was
