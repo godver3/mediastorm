@@ -442,6 +442,29 @@ func (s *Server) startPrequeue(ctx context.Context, p *principal, ref itemRef, p
 }
 
 // prequeueRequest describes an item the way mediastorm searches for it.
+// absoluteEpisodeNumber is an episode's absolute (release) number from the
+// series' metadata; 0 when unknown or a special.
+func (s *Server) absoluteEpisodeNumber(ctx context.Context, series titleInfo, ordering string, season, episode int) int {
+	if season <= 0 || episode <= 0 {
+		return 0
+	}
+	details, err := s.seriesDetails(ctx, series, ordering)
+	if err != nil || details == nil {
+		return 0
+	}
+	for _, sn := range details.Seasons {
+		if sn.Number != season {
+			continue
+		}
+		for _, ep := range sn.Episodes {
+			if ep.EpisodeNumber == episode {
+				return models.ReleaseAbsoluteEpisodeNumber(details.Seasons, ep)
+			}
+		}
+	}
+	return 0
+}
+
 func (s *Server) prequeueRequest(ctx context.Context, p *principal, ref itemRef) (playback.PrequeueRequest, error) {
 	req := playback.PrequeueRequest{
 		UserID:  p.Profile.ID,
@@ -465,6 +488,15 @@ func (s *Server) prequeueRequest(ctx context.Context, p *principal, ref itemRef)
 		req.TitleID, req.TitleName, req.MediaType, req.Year = series.ID, series.Name, "series", series.Year
 		req.ImdbID, req.TmdbID, req.TvdbID = series.ExternalIDs["imdb"], series.ExternalIDs["tmdb"], series.ExternalIDs["tvdb"]
 		req.SeasonNumber, req.EpisodeNumber = ref.Ctx.Season, ref.Ctx.Episode
+		if seasonOrdering(ref.Ctx.SeasonOrdering) != "" {
+			// Numbered in another ordering than library files are named
+			// in (aired): no library copy for it.
+			req.NoLibraryCopy = true
+		} else {
+			// Its absolute number, as the other clients send it: a library
+			// of files named by it (anime) has the episode under that number.
+			req.AbsoluteEpisodeNumber = s.absoluteEpisodeNumber(ctx, series, "", ref.Ctx.Season, ref.Ctx.Episode)
+		}
 	default:
 		return req, fmt.Errorf("item kind %s is not playable", ref.Kind)
 	}

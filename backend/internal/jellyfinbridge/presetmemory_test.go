@@ -75,6 +75,8 @@ func TestPresetVersionLabelMarksDefault(t *testing.T) {
 		{simple, presetSelection{Source: "none"}, "Preset · Simple ranking (default)"},
 		{german, presetSelection{}, "Preset · German HD"}, // default unknown
 		{simple, presetSelection{}, "Preset · Simple ranking"},
+		// The library copy is no ranking: named as it is.
+		{presetChoice{ID: libraryPresetID, Name: "Library copy"}, presetSelection{PresetID: libraryPresetID, Source: "library"}, "Library copy (default)"},
 	}
 	for _, tc := range cases {
 		if got := presetVersionLabel(tc.c, tc.def); got != tc.want {
@@ -157,5 +159,50 @@ func TestRefTitleIncludesSpecials(t *testing.T) {
 	regular := refTitle(itemRef{Kind: refEpisode, Source: "tmdb:tv:1:s1e2", Ctx: refContext{Season: 1, Episode: 2}})
 	if special == "" || special != regular {
 		t.Errorf("special %q, regular episode %q: want the same series", special, regular)
+	}
+}
+
+type absoluteSeriesMetadata struct{ tvdbSeriesMetadata }
+
+func (absoluteSeriesMetadata) SeriesDetails(_ context.Context, _ models.SeriesDetailsQuery) (*models.SeriesDetails, error) {
+	season := func(number, first, count int) models.SeriesSeason {
+		s := models.SeriesSeason{Number: number}
+		for i := 1; i <= count; i++ {
+			s.Episodes = append(s.Episodes, models.SeriesEpisode{SeasonNumber: number, EpisodeNumber: i, AbsoluteEpisodeNumber: first + i - 1})
+		}
+		return s
+	}
+	return &models.SeriesDetails{Seasons: []models.SeriesSeason{season(1, 1, 12), season(2, 13, 3)}}, nil
+}
+
+// The bridge sends an episode's absolute number, as the other clients do: a
+// library of files named by it (anime) has the episode under that number.
+func TestPrequeueRequestSendsAbsoluteEpisodeNumber(t *testing.T) {
+	h := newHarness(t, config.JellyfinBridgeSettings{})
+	h.srv.deps.Metadata = absoluteSeriesMetadata{}
+	p := &principal{}
+	p.Profile.ID = "u1"
+	req, err := h.srv.prequeueRequest(context.Background(), p, itemRef{Kind: refEpisode, Source: "tvdb:series:336522:s2e2", Ctx: refContext{Season: 2, Episode: 2}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.SeasonNumber != 2 || req.EpisodeNumber != 2 || req.AbsoluteEpisodeNumber != 14 {
+		t.Errorf("request = S%dE%d absolute %d, want S2E2 absolute 14", req.SeasonNumber, req.EpisodeNumber, req.AbsoluteEpisodeNumber)
+	}
+}
+
+// An episode numbered in another ordering than the library's files gets no
+// library copy (and no absolute number from the aired order).
+func TestPrequeueRequestSkipsLibraryForOtherOrderings(t *testing.T) {
+	h := newHarness(t, config.JellyfinBridgeSettings{})
+	h.srv.deps.Metadata = absoluteSeriesMetadata{}
+	p := &principal{}
+	p.Profile.ID = "u1"
+	req, err := h.srv.prequeueRequest(context.Background(), p, itemRef{Kind: refEpisode, Source: "tvdb:series:336522:s2e2", Ctx: refContext{Season: 2, Episode: 2, SeasonOrdering: "dvd"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !req.NoLibraryCopy || req.AbsoluteEpisodeNumber != 0 {
+		t.Errorf("request = noLibraryCopy %v absolute %d, want true 0", req.NoLibraryCopy, req.AbsoluteEpisodeNumber)
 	}
 }

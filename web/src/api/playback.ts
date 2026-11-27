@@ -71,6 +71,8 @@ export interface PrequeueBody {
   startOffset?: number;
   /** A quality preset picked for this title ("simple" for the simple ranking); remembered. */
   qualityPreset?: string;
+  /** Stream even when a local library has the title ("Stream instead"). */
+  noLibraryCopy?: boolean;
 }
 
 export function startPrequeue(profileId: string, body: PrequeueBody, signal?: AbortSignal) {

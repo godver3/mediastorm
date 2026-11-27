@@ -150,6 +150,11 @@ func (s *Server) autoPickStream(ctx context.Context, p *principal, itemID string
 		return first, nil
 	}
 	firstProbe := s.probeMedia(ctx, p, scratch, first)
+	if strings.HasPrefix(first.StreamPath, "localmedia:") {
+		// The library copy plays as it is: no walk down releases to avoid
+		// transcoding it.
+		return first, firstProbe
+	}
 	if firstProbe == nil || videoCopyable(caps, first, firstProbe) {
 		return first, firstProbe
 	}

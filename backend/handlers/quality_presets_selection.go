@@ -26,6 +26,7 @@ type presetListResponse struct {
 	AnimeMoviePreset     string                    `json:"animeMoviePreset"`
 	AnimeSeriesPreset    string                    `json:"animeSeriesPreset"`
 	AnimeOnlyInPickers   bool                      `json:"animeOnlyInPickers"`
+	IgnoreLibraryCopies  bool                      `json:"ignoreLibraryCopies"`
 	Sources              []qualityprofiles.Source  `json:"sources"`
 	Assignments          map[string]presetAssign   `json:"assignments,omitempty"`
 }
@@ -81,6 +82,7 @@ func (h *QualityPresetsHandler) List(w http.ResponseWriter, r *http.Request) {
 			resp.AnimeMoviePreset = s.QualityPresets.AnimeMoviePreset
 			resp.AnimeSeriesPreset = s.QualityPresets.AnimeSeriesPreset
 			resp.AnimeOnlyInPickers = s.QualityPresets.AnimeOnlyInPickers
+			resp.IgnoreLibraryCopies = s.QualityPresets.IgnoreLibraryCopies
 		}
 	}
 	if users := r.URL.Query()["userId"]; len(users) > 0 && h.UserSettings != nil {
@@ -136,6 +138,9 @@ type clientPresetList struct {
 	// and why. Offered and the selection then follow it.
 	Anime       *bool  `json:"anime,omitempty"`
 	AnimeReason string `json:"animeReason,omitempty"`
+	// PreferLibraryCopies: titles a local library has play from there (the
+	// "Library copy" choice) unless another preset is picked for them.
+	PreferLibraryCopies bool `json:"preferLibraryCopies"`
 }
 
 // ClientList is the app-facing list (GET /api/quality-presets?userId=&clientId=):
@@ -180,6 +185,7 @@ func (h *QualityPresetsHandler) ClientList(w http.ResponseWriter, r *http.Reques
 	}
 	resp.Offered = []clientPreset{}
 	animeOnly := false
+	libraryCopy := false // the title's media type has a copy in a local library
 	// The profile's own list narrows what the server offers.
 	var profilePresets *models.QualityPresetSelection
 	if userID != "" && h.UserSettings != nil {
@@ -190,11 +196,32 @@ func (h *QualityPresetsHandler) ClientList(w http.ResponseWriter, r *http.Reques
 	if h.Config != nil {
 		if s, err := h.Config.Load(); err == nil {
 			resp.Disabled = s.QualityPresets.Disabled
+			resp.PreferLibraryCopies = !s.QualityPresets.IgnoreLibraryCopies
 			resp.AllowRequestOverride = s.QualityPresets.AllowRequestOverride && !s.QualityPresets.Disabled
 			animeOnly = s.QualityPresets.AnimeOnlyInPickers
 			offered := s.QualityPresets.PickerPresets
 			if s.QualityPresets.Disabled {
 				offered = nil // switched off: apps show no picker
+			}
+			// noLibraryCopy: the client will not play one (the Jellyfin bridge
+			// for an episode numbered in another ordering than the files).
+			noLibrary, _ := strconv.ParseBool(q.Get("noLibraryCopy"))
+			if !s.QualityPresets.Disabled && !s.QualityPresets.IgnoreLibraryCopies && !noLibrary && h.LibraryCopy != nil && (titleMedia == "movie" || titleMedia == "series") {
+				year, _ := strconv.Atoi(q.Get("year"))
+				// The episode about to play when the client names one (the
+				// Jellyfin bridge), else any episode of the series.
+				season, _ := strconv.Atoi(q.Get("season"))
+				episode, _ := strconv.Atoi(q.Get("episode"))
+				absolute, _ := strconv.Atoi(q.Get("absolute"))
+				titleID := strings.TrimSpace(q.Get("titleId"))
+				if titleID != "" {
+					titleID = canonicalPrequeueTitleID(titleMedia, titleID, strings.TrimSpace(q.Get("imdbId")), strings.TrimSpace(q.Get("tmdbId")), strings.TrimSpace(q.Get("tvdbId")))
+				}
+				found, err := h.LibraryCopy(r, userID, LibraryCopyQuery{MediaType: titleMedia, TitleID: titleID, Title: strings.TrimSpace(q.Get("name")), Year: year,
+					IMDBID: strings.TrimSpace(q.Get("imdbId")), TMDBID: strings.TrimSpace(q.Get("tmdbId")), TVDBID: strings.TrimSpace(q.Get("tvdbId")), Season: season, Episode: episode, Absolute: absolute})
+				if libraryCopy = err == nil && found != nil; libraryCopy {
+					resp.Offered = append(resp.Offered, clientPreset{ID: config.QualityPresetLocal, Name: libraryCopyName, MediaType: titleMedia})
+				}
 			}
 			for _, id := range offered {
 				item, ok := byID[id]
@@ -223,6 +250,11 @@ func (h *QualityPresetsHandler) ClientList(w http.ResponseWriter, r *http.Reques
 			}
 		}
 		id, source := h.Select(mediaType, userID, clientID, titleID, titleAnime)
+		// A title a local library has plays from there unless a preset is
+		// remembered for it.
+		if libraryCopy && mediaType == titleMedia && source != "title" {
+			return clientPresetSelection{PresetID: config.QualityPresetLocal, Name: libraryCopyName, Source: "library"}
+		}
 		// A missing preset, one for the other app or one for another
 		// audience falls back to the simple ranking, exactly as the search does.
 		if item, ok := byID[id]; ok && item.App == app && item.Audience.Allows(titleAnime) {
@@ -270,6 +302,8 @@ func (h *QualityPresetsHandler) Selection(w http.ResponseWriter, r *http.Request
 		// HiddenByDefault: offered presets profiles see only when they show
 		// them themselves; entries that are not offered are dropped.
 		HiddenByDefault *[]string `json:"hiddenByDefault"`
+		// PreferLibraryCopies plays titles a local library has from there.
+		PreferLibraryCopies *bool `json:"preferLibraryCopies"`
 	}
 	if !decodeStrictPresetBody(w, r, &in) {
 		return
@@ -326,6 +360,9 @@ func (h *QualityPresetsHandler) Selection(w http.ResponseWriter, r *http.Request
 	}
 	if in.Enabled != nil {
 		settings.QualityPresets.Disabled = !*in.Enabled
+	}
+	if in.PreferLibraryCopies != nil {
+		settings.QualityPresets.IgnoreLibraryCopies = !*in.PreferLibraryCopies
 	}
 	if in.PickerPresets != nil {
 		settings.QualityPresets.PickerPresets = picker
@@ -733,3 +770,6 @@ func keepClientQualityPresets(settings *models.ClientFilterSettings, previous *m
 		settings.QualityPresetAnimeMovie, settings.QualityPresetAnimeSeries = previous.QualityPresetAnimeMovie, previous.QualityPresetAnimeSeries
 	}
 }
+
+// libraryCopyName names the "Library copy" choice (config.QualityPresetLocal).
+const libraryCopyName = "Library copy"

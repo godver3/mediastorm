@@ -220,6 +220,21 @@ func (f *fakeLocalMediaRepo) ListAllItemsByLibrary(ctx context.Context, libraryI
 	return items, nil
 }
 
+// ListItemsForTitle returns every item of the library: the service filters.
+func (f *fakeLocalMediaRepo) ListItemsForTitle(ctx context.Context, libraryID, _, _, _, _ string, season, episode int) ([]models.LocalMediaItem, error) {
+	items, err := f.ListAllItemsByLibrary(ctx, libraryID)
+	if err != nil || episode <= 0 {
+		return items, err
+	}
+	var out []models.LocalMediaItem
+	for _, item := range items {
+		if item.SeasonNumber == season && item.EpisodeNumber == episode {
+			out = append(out, item)
+		}
+	}
+	return out, nil
+}
+
 func (f *fakeLocalMediaRepo) UpsertItem(ctx context.Context, item *models.LocalMediaItem) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -948,5 +963,69 @@ func TestUpdateItemMatchRefreshesLibrarySummary(t *testing.T) {
 	}
 	if repo.library.LastScanLowConf != 0 {
 		t.Fatalf("LastScanLowConf = %d, want 0", repo.library.LastScanLowConf)
+	}
+}
+
+// Anime releases name the episode but not the season ("[Erai-raws] Shadows House - 01"): the
+// season folder supplies it. A season in the file name wins; Specials and Season 00 stay 0.
+func TestApplyFolderSeason(t *testing.T) {
+	show := models.LocalMediaLibraryTypeShow
+	for _, tc := range []struct {
+		path            string
+		libraryType     models.LocalMediaLibraryType
+		season, episode int
+		want            int
+	}{
+		{"/media/serien/Shadows House/Season 01/[Erai-raws] Shadows House - 01 [1080p].mkv", show, 0, 1, 1},
+		{"/media/serien/Show/Season 1/Show - 05.mkv", show, 0, 5, 1},
+		{"/media/serien/Show/Staffel 3/Show - 05.mkv", show, 0, 5, 3},
+		{"/media/serien/Show/S02/Show - 05.mkv", show, 0, 5, 2},
+		{"/media/serien/Show/Season 12 (2021)/Show - 05.mkv", show, 0, 5, 12},
+		{"/media/serien/Show/Season 00/Show - 05.mkv", show, 0, 5, 0},
+		{"/media/serien/Show/Specials/Show - 05.mkv", show, 0, 5, 0},
+		{"/media/serien/Shadows House/Show - 05.mkv", show, 0, 5, 0},      // no season folder
+		{"/media/serien/Show/Season 01/Show S02E05.mkv", show, 2, 5, 2},   // the file name wins
+		{"/media/serien/Show/Season 01/Show - Extras.mkv", show, 0, 0, 0}, // no episode
+		{"/media/filme/Season 01/Movie 2024.mkv", models.LocalMediaLibraryTypeMovie, 0, 1, 0},
+		{"/media/serien/Show/Season 100/Show - 05.mkv", show, 0, 5, 0},
+	} {
+		detected := detectedTitle{title: "Show", season: tc.season, episode: tc.episode}
+		applyFolderSeason(&detected, tc.libraryType, filepath.FromSlash(tc.path))
+		if detected.season != tc.want {
+			t.Errorf("%s: season %d, want %d", tc.path, detected.season, tc.want)
+		}
+	}
+}
+
+// A rescan applies the current detection to files it reuses unchanged (same size and time), so
+// episodes scanned before the season-folder rule get their season.
+func TestBuildItemReusedEpisodeTakesDetectedSeason(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "Shadows House", "Season 01")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	filePath := filepath.Join(dir, "[Erai-raws] Shadows House - 01 [1080p][Multiple Subtitle].mkv")
+	if err := os.WriteFile(filePath, []byte("video"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	modified := info.ModTime().UTC()
+	existing := models.LocalMediaItem{
+		ID: "item1", FilePath: filePath, SizeBytes: info.Size(), ModifiedAt: &modified,
+		SeasonNumber: 0, EpisodeNumber: 1,
+	}
+	library := models.LocalMediaLibrary{ID: "lib", Type: models.LocalMediaLibraryTypeShow, RootPath: root}
+	detected := detectedTitle{title: "Shadows House", episode: 1}
+	applyFolderSeason(&detected, library.Type, filePath)
+	item, reused, err := (&Service{}).buildItem(context.Background(), library, filePath, "Shadows House/Season 01/x.mkv", detected, nil, "scan2", existing, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reused || item.SeasonNumber != 1 || item.EpisodeNumber != 1 {
+		t.Fatalf("reused=%v season=%d episode=%d, want reused S1E1", reused, item.SeasonNumber, item.EpisodeNumber)
 	}
 }

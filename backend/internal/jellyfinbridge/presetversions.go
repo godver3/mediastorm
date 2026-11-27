@@ -121,6 +121,24 @@ func (s *Server) presetsForItem(ctx context.Context, p *principal, itemID string
 		if req.ImdbID != "" {
 			q.Set("imdbId", req.ImdbID)
 		}
+		// The same IDs the prequeue looks the library copy up by.
+		if req.TmdbID != "" {
+			q.Set("tmdbId", req.TmdbID)
+		}
+		if req.TvdbID != "" {
+			q.Set("tvdbId", req.TvdbID)
+		}
+		if req.NoLibraryCopy {
+			q.Set("noLibraryCopy", "1")
+		}
+		if req.EpisodeNumber > 0 {
+			// "Library copy" is offered for the episode itself.
+			q.Set("season", strconv.Itoa(req.SeasonNumber))
+			q.Set("episode", strconv.Itoa(req.EpisodeNumber))
+			if req.AbsoluteEpisodeNumber > 0 {
+				q.Set("absolute", strconv.Itoa(req.AbsoluteEpisodeNumber))
+			}
+		}
 	}
 	var resp struct {
 		Offered       []presetChoice  `json:"offered"`
@@ -325,11 +343,19 @@ func (s *Server) presetByMediaSource(ctx context.Context, p *principal, itemID s
 // title follow the defaults again.
 func presetVersionLabel(c presetChoice, def presetSelection) string {
 	label := "Preset · " + c.Name
+	if c.ID == libraryPresetID {
+		// Not a ranking: the file in the local library.
+		label = c.Name
+	}
 	if def.Source != "" && presetIDsEqual(c.ID, def.PresetID) {
 		label += " (default)"
 	}
 	return label
 }
+
+// libraryPresetID is mediastorm's "Library copy" choice: the title plays from a
+// local library (config.QualityPresetLocal).
+const libraryPresetID = "local"
 
 // presetIDsEqual compares preset IDs; "simple" and "" both mean the simple
 // ranking.

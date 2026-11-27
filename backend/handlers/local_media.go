@@ -30,6 +30,7 @@ type localMediaService interface {
 	ListLibraries(ctx context.Context) ([]models.LocalMediaLibrary, error)
 	ListGroups(ctx context.Context, libraryID string, query models.LocalMediaItemListQuery) (*models.LocalMediaGroupListResult, error)
 	FindMatches(ctx context.Context, query models.LocalMediaMatchQuery) ([]models.LocalMediaMatchedGroup, error)
+	FindLibraryCopies(ctx context.Context, query models.LocalMediaMatchQuery, season, episode, absolute int) ([]localmedia.LibraryCopy, error)
 }
 
 type localMediaUsersProvider interface {
@@ -160,14 +161,16 @@ func (h *LocalMediaHandler) requireLibraryAccess(w http.ResponseWriter, r *http.
 // profile when it is a kids profile in rating mode. Returns empty strings when
 // no rating restriction applies.
 func (h *LocalMediaHandler) kidsRatingCaps(r *http.Request) (movieRating, tvRating string) {
-	if h.usersSvc == nil {
-		return "", ""
-	}
 	profileID := strings.TrimSpace(r.URL.Query().Get("profileId"))
 	if profileID == "" {
 		profileID = strings.TrimSpace(r.URL.Query().Get("userId"))
 	}
-	if profileID == "" {
+	return h.profileKidsRatingCaps(profileID)
+}
+
+// profileKidsRatingCaps are a kids profile's rating caps ("" when none).
+func (h *LocalMediaHandler) profileKidsRatingCaps(profileID string) (movieRating, tvRating string) {
+	if h.usersSvc == nil || profileID == "" {
 		return "", ""
 	}
 	user, ok := h.usersSvc.Get(profileID)
@@ -658,4 +661,111 @@ func (h *LocalMediaHandler) GetArtwork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	remotemedia.CopyArtwork(w, resp)
+}
+
+// LibraryCopyQuery names a catalog title (and, for a series, an episode) to
+// look up in the local libraries.
+type LibraryCopyQuery struct {
+	MediaType string // movie or series
+	TitleID   string
+	Title     string
+	Year      int
+	IMDBID    string
+	TMDBID    string
+	TVDBID    string
+	// Season and Episode name the episode of a series; 0 means any. Absolute
+	// is its absolute number (anime), when known.
+	Season, Episode, Absolute int
+}
+
+// LibraryCopy is a profile's copy of a catalog title in a local library.
+type LibraryCopy struct {
+	ItemID      string
+	StreamPath  string
+	Name        string
+	LibraryName string
+	SizeBytes   int64
+}
+
+// FindLibraryCopy returns the profile's copy of a catalog title (or episode)
+// in a local library, nil when it has none. Libraries the profile may not
+// open and titles above a kids profile's rating cap do not count, as in the
+// library listings. Plex and Jellyfin libraries are not included: they play
+// through their own server. Of several files the largest counts. Without a
+// request (a scheduled pre-warm) the profile's own account decides.
+func (h *LocalMediaHandler) FindLibraryCopy(r *http.Request, profileID string, q LibraryCopyQuery) (*LibraryCopy, error) {
+	if h == nil || h.service == nil {
+		return nil, nil
+	}
+	if strings.TrimSpace(q.TitleID) == "" && strings.TrimSpace(q.Title) == "" && q.IMDBID == "" && q.TMDBID == "" && q.TVDBID == "" {
+		return nil, nil // nothing to look up
+	}
+	query := models.LocalMediaMatchQuery{MediaType: q.MediaType, TitleID: strings.TrimSpace(q.TitleID), Title: strings.TrimSpace(q.Title), Year: q.Year,
+		IMDBID: strings.TrimSpace(q.IMDBID), TMDBID: strings.TrimSpace(q.TMDBID), TVDBID: strings.TrimSpace(q.TVDBID)}
+	// The catalog's title ID carries one external ID ("tmdb:tv:1399",
+	// "tvdb:series:81189", "imdb:tt0944947"); a library file may be matched
+	// under another, so every known one is compared.
+	parts := strings.Split(query.TitleID, ":")
+	if last := parts[len(parts)-1]; len(parts) >= 2 {
+		switch strings.ToLower(parts[0]) {
+		case "tmdb":
+			if query.TMDBID == "" {
+				query.TMDBID = last
+			}
+		case "tvdb":
+			if query.TVDBID == "" {
+				query.TVDBID = last
+			}
+		case "imdb":
+			if query.IMDBID == "" {
+				query.IMDBID = last
+			}
+		}
+	}
+	ctx, accountID, isMaster := context.Background(), "", false
+	if r != nil {
+		ctx, accountID, isMaster = r.Context(), auth.GetAccountID(r), auth.IsMaster(r)
+	} else if h.usersSvc != nil {
+		if user, ok := h.usersSvc.Get(profileID); ok {
+			accountID = user.AccountID
+		}
+	}
+	copies, err := h.service.FindLibraryCopies(ctx, query, q.Season, q.Episode, q.Absolute)
+	if err != nil || len(copies) == 0 {
+		return nil, err
+	}
+	if profileID != "" && h.access != nil && (accountID == "" || h.usersSvc == nil || !h.usersSvc.BelongsToAccount(profileID, accountID)) {
+		return nil, nil
+	}
+	movieCap, tvCap := h.profileKidsRatingCaps(profileID)
+	var best *LibraryCopy
+	for _, c := range copies {
+		if h.access != nil {
+			allowed, err := h.access.CanAccess(ctx, c.LibraryID, accountID, profileID, isMaster)
+			if err != nil {
+				return nil, err
+			}
+			if !allowed {
+				continue
+			}
+		}
+		if movieCap != "" || tvCap != "" {
+			group := models.LocalMediaItemGroup{LibraryType: c.Item.LibraryType}
+			if c.Item.Metadata != nil {
+				group.Certification = strings.TrimSpace(c.Item.Metadata.Certification)
+			}
+			if !kids.IsLibraryGroupAllowed(group, movieCap, tvCap) {
+				continue
+			}
+		}
+		if best != nil && c.Item.SizeBytes <= best.SizeBytes {
+			continue // a sample or a smaller copy
+		}
+		name := strings.TrimSpace(c.Item.FileName)
+		if name == "" {
+			name = filepath.Base(c.Item.FilePath)
+		}
+		best = &LibraryCopy{ItemID: c.Item.ID, StreamPath: localmedia.BuildStreamPath(c.Item), Name: name, LibraryName: c.LibraryName, SizeBytes: c.Item.SizeBytes}
+	}
+	return best, nil
 }

@@ -88,6 +88,8 @@ type PrequeueHandler struct {
 	contentPreferencesSvc *content_preferences.Service
 	defaultQualityPreset  DefaultQualityPresetFunc
 	titlePresets          TitlePresetMemory
+	// libraryCopies finds a title's file in the profile's local libraries.
+	libraryCopies LibraryCopyFinder
 	// titlePresetPicks orders the remembers of picked presets: each pick
 	// gets the next number per profile, device and title, and only the
 	// latest pick is written (two quick picks run concurrently).
@@ -744,6 +746,9 @@ type titlePresetPick struct {
 	Name, ImdbID                         string
 	Year                                 int
 	PresetID                             string
+	// keepDefault remembers the preset even when it is the default one (the
+	// title has a library copy, which plays without a remembered preset).
+	keepDefault bool
 	// seq orders picks (titlePresetPickOrder); 0 writes unconditionally.
 	seq uint64
 }
@@ -855,7 +860,7 @@ func (h *PrequeueHandler) rememberTitlePreset(pick titlePresetPick) {
 		contentType = "series"
 	}
 	remember := strings.TrimSpace(pick.PresetID)
-	if h.defaultQualityPreset != nil {
+	if h.defaultQualityPreset != nil && !pick.keepDefault {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		def := h.defaultQualityPreset(ctx, contentType, pick.UserID, pick.ClientID, pick.TitleID, pick.Name, pick.Year, pick.ImdbID)
 		cancel()
@@ -1120,6 +1125,12 @@ func (h *PrequeueHandler) RunWorkerSync(ctx context.Context, titleID, titleName,
 
 // RunWorkerSyncScoped runs the prequeue worker synchronously for an explicit settings scope.
 func (h *PrequeueHandler) RunWorkerSyncScoped(ctx context.Context, titleID, titleName, imdbID, mediaType string, year int, userID, clientID, settingsScopeKey string, targetEpisode *models.EpisodeReference) (string, error) {
+	// A title a local library has is not searched for: playing it opens the
+	// file (unless a preset picked for it streams it).
+	if h.libraryCopyFor(nil, playback.PrequeueRequest{TitleID: titleID, ImdbID: imdbID, Year: year, UserID: userID}, mediaType, titleName, targetEpisode) != nil &&
+		!h.titleHasPresetPick(userID, clientID, titleID, mediaType) {
+		return "", errPrewarmLibraryCopy
+	}
 	// Create prequeue entry with a long TTL (inherits store TTL, prewarm service will extend)
 	// Never replace an entry that is still resolving: that is usually the
 	// details-page prequeue a client is polling, and replacing it cancels its
@@ -1277,13 +1288,33 @@ func (h *PrequeueHandler) Prequeue(w http.ResponseWriter, r *http.Request) {
 	settingsScopeKey, adaptiveCaps := h.prequeueSettingsScope(req.UserID, clientID, req.TitleID, throughput)
 	// A preset asked for by this request (a version picked in a client)
 	// ranks differently, so it gets its own prequeue.
-	qualityPreset := h.requestQualityPreset(r.Context(), req.UserID, mediaType, req.QualityPreset)
-	if qualityPreset != "" {
-		settingsScopeKey += "|preset:" + qualityPreset
+	// "Library copy" (config.QualityPresetLocal) is not a ranking: it plays
+	// the title from a local library, below.
+	wantLibrary := strings.EqualFold(strings.TrimSpace(req.QualityPreset), config.QualityPresetLocal)
+	requestedPreset := req.QualityPreset
+	if wantLibrary {
+		requestedPreset = ""
+	}
+	qualityPreset := h.requestQualityPreset(r.Context(), req.UserID, mediaType, requestedPreset)
+	var libraryCopy *LibraryCopy
+	if !req.NoLibraryCopy {
+		libraryCopy = h.libraryCopyFor(r, req, mediaType, titleName, targetEpisode)
+	}
+	if qualityPreset != "" || wantLibrary {
+		if qualityPreset != "" {
+			settingsScopeKey += "|preset:" + qualityPreset
+		}
+		// Picking the library copy clears a preset remembered for the title;
+		// picking a preset for a title a library has keeps it remembered even
+		// when it is the default one, so its later playbacks search too.
 		pick := titlePresetPick{UserID: req.UserID, ClientID: clientID, TitleID: req.TitleID, MediaType: mediaType,
-			Name: titleName, ImdbID: req.ImdbID, Year: req.Year, PresetID: qualityPreset}
+			Name: titleName, ImdbID: req.ImdbID, Year: req.Year, PresetID: qualityPreset, keepDefault: libraryCopy != nil && qualityPreset != ""}
 		pick.seq = h.titlePresetPicks.take(pick)
 		go h.rememberTitlePreset(pick)
+	}
+	if libraryCopy != nil && qualityPreset == "" && (wantLibrary || !h.titleHasPresetPick(req.UserID, clientID, req.TitleID, mediaType)) {
+		h.startLibraryPrequeue(w, req, clientID, mediaType, titleName, targetEpisode, settingsScopeKey, libraryCopy)
+		return
 	}
 	log.Printf("[prequeue] Effective settings scope for title=%s user=%s client=%s: %s", req.TitleID, req.UserID, clientID, settingsScopeKey)
 
@@ -2231,6 +2262,12 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 		return
 	}
 
+	h.completePrequeue(ctx, prequeueID, titleID, userID, clientID, startOffset, skipHLS, workerStart, resolveStart, choice)
+}
+
+// completePrequeue takes a resolved stream to ready: it probes the file, picks the audio and
+// subtitle tracks, starts HLS where the stream needs it and marks the entry ready.
+func (h *PrequeueHandler) completePrequeue(ctx context.Context, prequeueID, titleID, userID, clientID string, startOffset float64, skipHLS bool, workerStart, resolveStart time.Time, choice prequeueResolutionChoice) {
 	resolution := choice.resolution
 	selectedResult := choice.selectedResult
 	selectedResultIndex := choice.selectedResultIndex
@@ -4488,3 +4525,110 @@ func (h *PrequeueHandler) findAudioTrackByLanguage(streams []AudioStreamInfo, pr
 func (h *PrequeueHandler) findSubtitleTrackByPreference(streams []SubtitleStreamInfo, preferredLanguage, mode, audioLanguage string) int {
 	return FindSubtitleTrackByPreference(streams, preferredLanguage, mode, audioLanguage)
 }
+
+// LibraryCopyFinder finds the profile's copy of a catalog title (an episode
+// for a series) in a local library; nil when it has none.
+type LibraryCopyFinder func(r *http.Request, profileID string, q LibraryCopyQuery) (*LibraryCopy, error)
+
+// SetLibraryCopies lets titles a local library has play from there.
+func (h *PrequeueHandler) SetLibraryCopies(find LibraryCopyFinder) {
+	h.libraryCopies = find
+}
+
+// libraryCopyFor returns the profile's library copy of the requested title,
+// nil when it has none or the server always searches.
+func (h *PrequeueHandler) libraryCopyFor(r *http.Request, req playback.PrequeueRequest, mediaType, titleName string, targetEpisode *models.EpisodeReference) *LibraryCopy {
+	if h.libraryCopies == nil || h.configManager == nil {
+		return nil
+	}
+	if settings, err := h.configManager.Load(); err != nil || settings.QualityPresets.IgnoreLibraryCopies {
+		return nil
+	}
+	q := LibraryCopyQuery{MediaType: mediaType, TitleID: req.TitleID, Title: titleName, Year: req.Year, IMDBID: req.ImdbID, TMDBID: req.TmdbID, TVDBID: req.TvdbID}
+	if mediaType == "series" || mediaType == "tv" || mediaType == "show" {
+		q.MediaType = "series"
+		if targetEpisode == nil || alternateOrdering(targetEpisode.Numbering) {
+			// Library files are named in the aired order: an episode
+			// numbered in another one (DVD, absolute) is not looked up.
+			return nil
+		}
+		q.Season, q.Episode, q.Absolute = targetEpisode.SeasonNumber, targetEpisode.EpisodeNumber, targetEpisode.AbsoluteEpisodeNumber
+	}
+	found, err := h.libraryCopies(r, req.UserID, q)
+	if err != nil {
+		log.Printf("[prequeue] Library copy lookup for title=%s failed: %v", req.TitleID, err)
+		return nil
+	}
+	return found
+}
+
+// alternateOrdering reports whether an episode is numbered in an ordering
+// other than the series' default (aired) one.
+func alternateOrdering(n *models.EpisodeNumbering) bool {
+	if n == nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(n.Ordering)) {
+	case "", "default", "official", "aired":
+		return false
+	}
+	return true
+}
+
+// titleHasPresetPick reports whether a preset picked earlier for the title on
+// the device still applies, as the search decides (a deleted preset, one no
+// longer offered or for the other app does not): then it searches instead of
+// playing the library copy.
+func (h *PrequeueHandler) titleHasPresetPick(userID, clientID, titleID, mediaType string) bool {
+	if h.titlePresets == nil {
+		return false
+	}
+	if h.indexerSvc != nil && h.configManager != nil {
+		settings, err := h.configManager.Load()
+		if err != nil {
+			return false
+		}
+		sel := h.indexerSvc.SelectQualityPreset(indexer.SearchOptions{TitleID: titleID, UserID: userID, ClientID: clientID, MediaType: mediaType}, settings)
+		return sel.Source == "title"
+	}
+	id, err := h.titlePresets.TitlePreset(context.Background(), userID, clientID, titleID)
+	return err == nil && strings.TrimSpace(id) != ""
+}
+
+// startLibraryPrequeue answers a prequeue with the title's library copy: no
+// search, the file is prepared (probe, tracks, HLS) like a resolved stream.
+func (h *PrequeueHandler) startLibraryPrequeue(w http.ResponseWriter, req playback.PrequeueRequest, clientID, mediaType, titleName string, targetEpisode *models.EpisodeReference, settingsScopeKey string, copy *LibraryCopy) {
+	scope := settingsScopeKey + "|library"
+	// The same file being prepared or ready (two clients, or a details page
+	// and Play) is shared, not replaced under the one polling it.
+	if existing, ok := h.store.GetByTitleUserScopeForPlayback(req.TitleID, req.UserID, scope); ok && existing.StreamPath == copy.StreamPath &&
+		prequeueEpisodeMatches(targetEpisode, existing.TargetEpisode) && (existing.Status == playback.PrequeueStatusReady || isPrequeueInProgress(existing.Status)) {
+		resp := playback.PrequeueResponse{PrequeueID: existing.ID, TargetEpisode: existing.TargetEpisode, Status: existing.Status}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+		return
+	}
+	entry, _ := h.store.CreateScoped(req.TitleID, titleName, req.UserID, mediaType, req.Year, targetEpisode, req.Reason, scope)
+	h.store.Update(entry.ID, func(e *playback.PrequeueEntry) { e.StreamPath = copy.StreamPath })
+	h.latencyTracker.NotePrequeueRequested(entry.ID, req.TitleID, req.UserID, titleName, mediaType)
+	h.latencyTracker.NotePrequeueMetadata(entry.ID, req.ImdbID, req.Year)
+	if h.prewarmSvc != nil {
+		h.prewarmSvc.AdoptEntry(entry.ID)
+	}
+	log.Printf("[prequeue] Playing title=%s user=%s from library %q: %s", req.TitleID, req.UserID, copy.LibraryName, copy.Name)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+		defer cancel()
+		h.store.SetCancelFunc(entry.ID, cancel)
+		start := time.Now()
+		choice := prequeueResolutionChoice{resolution: &models.PlaybackResolution{WebDAVPath: copy.StreamPath, FileSize: copy.SizeBytes}}
+		h.completePrequeue(ctx, entry.ID, req.TitleID, req.UserID, clientID, req.StartOffset, req.SkipHLS, start, start, choice)
+	}()
+	resp := playback.PrequeueResponse{PrequeueID: entry.ID, TargetEpisode: targetEpisode, Status: playback.PrequeueStatusQueued}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+// errPrewarmLibraryCopy: a scheduled pre-warm skipped a title a local library
+// has (the prewarm service counts it as skipped, not failed).
+var errPrewarmLibraryCopy = playback.ErrPrequeueLibraryCopy

@@ -491,6 +491,11 @@ func (s *Service) warmContinueWatchingScope(
 	(*resolveCount)++
 
 	prequeueID, err := s.runWorker(ctx, state.SeriesID, state.SeriesTitle, imdbID, mediaType, state.Year, user.ID, clientID, settingsScopeKey, targetEpisode)
+	if errors.Is(err, playback.ErrPrequeueLibraryCopy) {
+		// Played from a local library: nothing to warm, and not a failure.
+		result.Skipped++
+		return nil
+	}
 	if errors.Is(err, playback.ErrPrequeueInProgress) {
 		// A client-initiated prequeue for this title is mid-resolve. Leave it
 		// running and record nothing, so the next cycle adopts it once ready.
@@ -1394,6 +1399,9 @@ func (s *Service) reResolveExpired(ctx context.Context) int {
 			}
 		}
 		newPqID, err := s.runWorker(ctx, entry.TitleID, entry.TitleName, imdbID, entry.MediaType, entry.Year, entry.UserID, clientID, entry.SettingsScopeKey, targetEpisode)
+		if errors.Is(err, playback.ErrPrequeueLibraryCopy) {
+			continue // a local library has it now: playing it opens the file
+		}
 		if err != nil {
 			log.Printf("[prewarm] Re-resolve failed for %s (%s): %v", entry.ID, entry.TitleName, err)
 			continue

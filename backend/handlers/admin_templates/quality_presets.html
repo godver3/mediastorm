@@ -134,6 +134,10 @@
             <div class="qp-row" style="margin-top:0.75rem;">
                 <label><input type="checkbox" id="qpAllowOverride"> Apps may request any preset for a single search (API)</label>
             </div>
+            <div class="qp-row" style="margin-top:0.5rem;">
+                <label><input type="checkbox" id="qpPreferLibrary"> Prefer library copies</label>
+            </div>
+            <p class="qp-muted">A title or episode one of the profile's local libraries has plays from there: <i>Library copy</i> is offered first in version pickers and used by default, in every app and in Jellyfin (Continue watching too). Picking another preset for the title streams it instead, also later.</p>
             <h3 style="margin-top:1.25rem; font-size:1rem;">Offer in version pickers</h3>
             <p class="qp-muted">Checked presets appear as extra versions ("Preset · name") in the version menu of Jellyfin clients and in the web player's release list, so viewers can pick one for a single playback. They can always be picked, even with the option above off.</p>
             <div id="qpOfferTabs" class="qp-row" role="group" aria-label="Show presets for" style="gap:0.35rem; margin:0.5rem 0;"></div>
@@ -402,7 +406,8 @@ async function loadList() {
     $('qpAnimeOnly').checked = !!data.animeOnlyInPickers;
     $('qpAnimeMovieSel').disabled = $('qpAnimeSeriesSel').disabled = $('qpAnimeOnly').disabled = !IS_ADMIN;
     $('qpAllowOverride').checked = !!data.allowRequestOverride;
-    $('qpMovieSel').disabled = $('qpSeriesSel').disabled = $('qpAllowOverride').disabled = !IS_ADMIN;
+    $('qpPreferLibrary').checked = !data.ignoreLibraryCopies;
+    $('qpMovieSel').disabled = $('qpSeriesSel').disabled = $('qpAllowOverride').disabled = $('qpPreferLibrary').disabled = !IS_ADMIN;
     renderPicker();
     $('qpSaveSelection').style.display = IS_ADMIN ? '' : 'none';
 }
@@ -718,7 +723,7 @@ function prepareAssign(row) {
 }
 
 function prepareSelection() {
-    const body = { moviePreset: $('qpMovieSel').value, seriesPreset: $('qpSeriesSel').value, allowRequestOverride: $('qpAllowOverride').checked, pickerPresets: pickerSelection(), hiddenByDefault: pickerSelection().filter(id => state.defaultHidden.has(id)), animeMoviePreset: $('qpAnimeMovieSel').value, animeSeriesPreset: $('qpAnimeSeriesSel').value, animeOnlyInPickers: $('qpAnimeOnly').checked };
+    const body = { moviePreset: $('qpMovieSel').value, seriesPreset: $('qpSeriesSel').value, allowRequestOverride: $('qpAllowOverride').checked, pickerPresets: pickerSelection(), hiddenByDefault: pickerSelection().filter(id => state.defaultHidden.has(id)), animeMoviePreset: $('qpAnimeMovieSel').value, animeSeriesPreset: $('qpAnimeSeriesSel').value, animeOnlyInPickers: $('qpAnimeOnly').checked, preferLibraryCopies: $('qpPreferLibrary').checked };
     return () => run(() => api('/selection', { method: 'PUT', body }));
 }
 function stageSelection() { if (IS_ADMIN) stage('selection', prepareSelection); }

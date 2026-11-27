@@ -1058,6 +1058,8 @@ func main() {
 	localMediaHandler.SetMetadataLanguageProviders(metadataService, cfgManager, userSettingsService)
 	localMediaHandler.SetRemoteMediaService(remoteMediaService)
 	localMediaHandler.SetLibraryAccessService(libraryAccessService)
+	// Catalog titles a local library has play from there ("Library copy").
+	prequeueHandler.SetLibraryCopies(localMediaHandler.FindLibraryCopy)
 	userSettingsHandler.LocalMedia = localMediaService
 	userSettingsHandler.SetPrequeueStore(prequeueHandler.GetStore())
 	userSettingsHandler.SetSearchCacheClearer(indexerService)
@@ -1260,6 +1262,7 @@ func main() {
 		},
 		SearchCache:   indexerService,
 		PrequeueStore: prequeueHandler.GetStore(),
+		LibraryCopy:   localMediaHandler.FindLibraryCopy,
 		TitleAnime:    indexerHandler.TitleAnime,
 		Select:        selectPreset,
 	}
