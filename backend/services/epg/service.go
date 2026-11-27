@@ -1,6 +1,7 @@
 package epg
 
 import (
+	"bufio"
 	"compress/gzip"
 	"context"
 	"encoding/json"
@@ -117,7 +118,9 @@ func NewService(storageDir string, cfgManager *config.Manager) *Service {
 			return
 		}
 
-		if !s.installRestoredSchedule(initialSchedule, schedule) {
+		installed := s.installRestoredSchedule(initialSchedule, schedule)
+		releaseGuideMemory()
+		if !installed {
 			log.Printf("[epg] skipped stale cached EPG data after concurrent refresh")
 			return
 		}
@@ -604,6 +607,8 @@ func (s *Service) Refresh(ctx context.Context) error {
 		return refreshErr
 	}
 
+	compactSchedule(newSchedule)
+
 	// Only replace the schedule after the refresh produced usable guide data.
 	s.mu.Lock()
 	s.schedule = newSchedule
@@ -619,6 +624,7 @@ func (s *Service) Refresh(ctx context.Context) error {
 	if err := s.saveToDisk(); err != nil {
 		log.Printf("[epg] failed to save EPG to disk: %v", err)
 	}
+	releaseGuideMemory()
 
 	now := time.Now().UTC()
 	coverage := scheduleCoverage(newSchedule, now)
@@ -1412,14 +1418,6 @@ func (s *Service) ChannelIcons(channelIDs []string) map[string]string {
 
 // saveToDisk persists the EPG data to disk.
 func (s *Service) saveToDisk() error {
-	s.mu.RLock()
-	data, err := json.Marshal(s.schedule)
-	s.mu.RUnlock()
-
-	if err != nil {
-		return fmt.Errorf("marshal EPG data: %w", err)
-	}
-
 	cacheDir := filepath.Join(s.storageDir, "epg")
 	if err := os.MkdirAll(cacheDir, 0755); err != nil {
 		return fmt.Errorf("create cache directory: %w", err)
@@ -1428,8 +1426,25 @@ func (s *Service) saveToDisk() error {
 	cachePath := filepath.Join(cacheDir, epgCacheFile)
 	tmpPath := cachePath + ".tmp"
 
-	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+	// Stream-encode straight to the file instead of building the whole
+	// (100+ MB) JSON document in memory first.
+	f, err := os.Create(tmpPath)
+	if err != nil {
 		return fmt.Errorf("write temp file: %w", err)
+	}
+	w := bufio.NewWriterSize(f, 1<<20)
+	s.mu.RLock()
+	err = json.NewEncoder(w).Encode(s.schedule)
+	s.mu.RUnlock()
+	if err == nil {
+		err = w.Flush()
+	}
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("marshal EPG data: %w", err)
 	}
 
 	if err := os.Rename(tmpPath, cachePath); err != nil {
@@ -1444,15 +1459,19 @@ func (s *Service) saveToDisk() error {
 func (s *Service) readFromDisk() (*models.EPGSchedule, error) {
 	cachePath := filepath.Join(s.storageDir, "epg", epgCacheFile)
 
-	data, err := os.ReadFile(cachePath)
+	// Stream-decode: the cache can exceed 100 MB, and reading it whole doubled
+	// peak memory during startup.
+	f, err := os.Open(cachePath)
 	if err != nil {
 		return nil, err
 	}
+	defer f.Close()
 
 	var schedule models.EPGSchedule
-	if err := json.Unmarshal(data, &schedule); err != nil {
+	if err := json.NewDecoder(bufio.NewReaderSize(f, 1<<20)).Decode(&schedule); err != nil {
 		return nil, fmt.Errorf("unmarshal EPG data: %w", err)
 	}
+	compactSchedule(&schedule)
 	return &schedule, nil
 }
 
