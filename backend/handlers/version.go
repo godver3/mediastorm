@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 )
@@ -16,11 +17,42 @@ var (
 	versionOnce sync.Once
 )
 
+// buildCommit is the backend's git commit, set at build time with
+// -ldflags "-X novastream/handlers.buildCommit=<sha>".
+//
+// version.txt's build ID is frozen at 20261115: the legacy Expo apps compare it
+// against their own build ID for update prompts, so it must not move. The commit
+// digest is what identifies a backend build now.
+var buildCommit string
+
+// GetBackendCommit returns the short (8-char) git commit of this build, falling
+// back to the Go toolchain's embedded VCS revision, then "dev".
+func GetBackendCommit() string {
+	commit := strings.TrimSpace(buildCommit)
+	if commit == "" {
+		if info, ok := debug.ReadBuildInfo(); ok {
+			for _, setting := range info.Settings {
+				if setting.Key == "vcs.revision" {
+					commit = setting.Value
+				}
+			}
+		}
+	}
+	if commit == "" {
+		return "dev"
+	}
+	if len(commit) > 8 {
+		commit = commit[:8]
+	}
+	return commit
+}
+
 type VersionHandler struct{}
 
 type VersionResponse struct {
 	Version string `json:"version"`
 	BuildID string `json:"buildId"`
+	Commit  string `json:"commit"`
 }
 
 func NewVersionHandler() *VersionHandler {
@@ -82,5 +114,6 @@ func (h *VersionHandler) GetVersion(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(VersionResponse{
 		Version: GetBackendVersion(),
 		BuildID: GetBackendBuildID(),
+		Commit:  GetBackendCommit(),
 	})
 }

@@ -170,3 +170,4 @@ backend/tools/benchfb/
 backend/tools/benchrar/
 backend/benchfb
 backend/benchrar
+/.secrets/

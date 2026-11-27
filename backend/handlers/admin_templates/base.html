@@ -2740,7 +2740,7 @@
             <img src="{{brandingURL "web-icon" "icon-rounded.png"}}" alt="">
             <span class="admin-sidebar-brand-copy">
                 <span class="admin-sidebar-brand-title">Mediastorm</span>
-                <span class="admin-sidebar-brand-build">Setup · build {{.BuildID}}</span>
+                <span class="admin-sidebar-brand-build">Setup · build {{buildDigest}}</span>
             </span>
         </span>
     </nav>
@@ -2754,7 +2754,7 @@
                 <img src="{{brandingURL "web-icon" "icon-rounded.png"}}" alt="">
                 <span class="admin-sidebar-brand-copy">
                     <span class="admin-sidebar-brand-title">Mediastorm</span>
-                    <span class="admin-sidebar-brand-build">{{if .IsAdmin}}Admin{{else}}Account{{end}} · build {{.BuildID}}</span>
+                    <span class="admin-sidebar-brand-build">{{if .IsAdmin}}Admin{{else}}Account{{end}} · build {{buildDigest}}</span>
                 </span>
             </a>
 

@@ -3,7 +3,7 @@
 {{define "title"}}Dashboard - {{if .IsAdmin}}mediastorm Admin{{else}}mediastorm account{{end}}{{end}}
 
 {{define "styles"}}
-<link rel="stylesheet" href="{{.ServerBasePath}}/api/static/gridstack-13.2.0.min.css?v={{.BuildID}}-layout2">
+<link rel="stylesheet" href="{{.ServerBasePath}}/api/static/gridstack-13.2.0.min.css?v={{buildDigest}}-layout2">
 <style>
 .donation-banner {
     position: relative;
@@ -1930,8 +1930,8 @@ body.numbers-station-open {
 {{end}}
 
 {{define "scripts"}}
-<script src="{{.ServerBasePath}}/api/static/gridstack-13.2.0-all.js?v={{.BuildID}}-layout2"></script>
-<script src="{{.ServerBasePath}}/api/static/admin-dashboard-layout-v1.js?v={{.BuildID}}-layout4"></script>
+<script src="{{.ServerBasePath}}/api/static/gridstack-13.2.0-all.js?v={{buildDigest}}-layout2"></script>
+<script src="{{.ServerBasePath}}/api/static/admin-dashboard-layout-v1.js?v={{buildDigest}}-layout4"></script>
 <style>
     /* View toggle buttons */
     .view-toggle-btn {

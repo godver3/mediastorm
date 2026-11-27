@@ -1861,6 +1861,10 @@ components:
           type: string
         buildId:
           type: string
+          description: Frozen at 20261115 for legacy Expo update checks.
+        commit:
+          type: string
+          description: Short git commit digest identifying this backend build.
 
     # ---------------------------------------------------------------- titles
 

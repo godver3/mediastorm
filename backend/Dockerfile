@@ -44,10 +44,12 @@ RUN --mount=type=cache,target=/go/pkg/mod,sharing=locked \
 # Copy source code
 COPY backend/ .
 
-# Build the application (CGO required for rapidyenc)
+# Build the application (CGO required for rapidyenc). GIT_COMMIT is the
+# build digest shown in the admin UI and /api/version.
+ARG GIT_COMMIT=""
 RUN --mount=type=cache,target=/go/pkg/mod,sharing=locked \
     --mount=type=cache,target=/root/.cache/go-build,sharing=locked \
-    CGO_ENABLED=1 go build -o mediastorm .
+    CGO_ENABLED=1 go build -ldflags "-X novastream/handlers.buildCommit=${GIT_COMMIT}" -o mediastorm .
 
 # iroh bridge build stage. The Go backend shells out to this Rust binary to host
 # the iroh remote-access endpoint, so the image needs a Linux build of it.
