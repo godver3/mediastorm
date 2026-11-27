@@ -64,6 +64,7 @@ type playbackSession struct {
 	seen           bool
 	paused         bool
 	watched        bool
+	suppressed     bool
 	progressSent   bool
 	progressBucket int
 	profileID      string
@@ -82,6 +83,11 @@ const (
 	progressHeartbeatTimeout         = 2 * time.Minute
 	progressHeartbeatPersistInterval = 30 * time.Second
 	progressReapInterval             = 15 * time.Second
+	// A session that resumes an item already marked watched (stream migration,
+	// player reopen) must not announce it again. Rewatches start from the top,
+	// so only sessions that begin past this point are treated as continuations.
+	recentWatchedWindow        = 6 * time.Hour
+	recentWatchedResumePercent = 50
 )
 
 type profileProvider interface {
@@ -111,11 +117,13 @@ type Service struct {
 	deliveries chan delivery
 	stop       chan struct{}
 
-	sessionMu   sync.Mutex
-	sessions    map[string]playbackSession
-	observeMu   sync.Mutex
-	deliveredMu sync.Mutex
-	delivered   map[string]time.Time
+	sessionMu sync.Mutex
+	sessions  map[string]playbackSession
+	// recentWatched maps profile+playback key to when Watched last fired.
+	recentWatched map[string]time.Time
+	observeMu     sync.Mutex
+	deliveredMu   sync.Mutex
+	delivered     map[string]time.Time
 
 	progressMessages  map[string]string
 	progressSequences map[string]uint64
@@ -131,6 +139,7 @@ func New(repo datastore.NotificationRepository, options ...Option) *Service {
 		deliveries:        make(chan delivery, 256),
 		stop:              make(chan struct{}),
 		sessions:          make(map[string]playbackSession),
+		recentWatched:     make(map[string]time.Time),
 		delivered:         make(map[string]time.Time),
 		progressMessages:  make(map[string]string),
 		progressSequences: make(map[string]uint64),
@@ -371,7 +380,14 @@ func (s *Service) HandlePlaybackUpdate(userID string, update models.PlaybackProg
 	if !state.updatedAt.IsZero() && now.Sub(state.updatedAt) > 30*time.Minute {
 		state = playbackSession{}
 	}
+	watchedKey := userID + "\x00" + persistedPlaybackKey
 	if state.notificationID == "" {
+		if at, ok := s.recentWatched[watchedKey]; ok && now.Sub(at) < recentWatchedWindow &&
+			percent >= recentWatchedResumePercent {
+			state.suppressed = true
+			state.seen = true
+			state.watched = true
+		}
 		state.profileID = userID
 		state.playbackKey = persistedPlaybackKey
 		state.notificationID = uuid.NewString()
@@ -383,12 +399,13 @@ func (s *Service) HandlePlaybackUpdate(userID string, update models.PlaybackProg
 	if active && !state.seen {
 		eventTypes = append(eventTypes, models.NotificationEventWatchStarted)
 		state.seen = true
-	} else if active && state.paused {
+	} else if active && state.paused && !state.suppressed {
 		eventTypes = append(eventTypes, models.NotificationEventWatchResumed)
 	}
 	if percent >= 90 && !state.watched {
 		eventTypes = append(eventTypes, models.NotificationEventWatchWatched)
 		state.watched = true
+		s.recentWatched[watchedKey] = now
 	} else if active && percent < 90 && !state.watched {
 		progressBucket := int(percent) / progressStepPercent
 		if !state.progressSent || progressBucket != state.progressBucket {
@@ -585,12 +602,16 @@ func (s *Service) enqueueDelivery(item delivery) {
 }
 
 func (s *Service) pruneSessionsLocked(now time.Time) {
-	if len(s.sessions) < 256 {
-		return
+	if len(s.sessions) >= 256 {
+		for key, state := range s.sessions {
+			if now.Sub(state.updatedAt) > 30*time.Minute {
+				delete(s.sessions, key)
+			}
+		}
 	}
-	for key, state := range s.sessions {
-		if now.Sub(state.updatedAt) > 30*time.Minute {
-			delete(s.sessions, key)
+	for key, at := range s.recentWatched {
+		if now.Sub(at) > recentWatchedWindow {
+			delete(s.recentWatched, key)
 		}
 	}
 }

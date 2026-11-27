@@ -1374,3 +1374,32 @@ func TestObserveCalendarDoesNotNotifyUnclassifiedAvailabilityWhenReleaseTypesAre
 	case <-time.After(100 * time.Millisecond):
 	}
 }
+
+func TestMigratedPlaybackSessionDoesNotRepeatWatched(t *testing.T) {
+	service := New(newMemoryRepo())
+	defer service.Close()
+
+	update := models.PlaybackProgressUpdate{
+		MediaType:         "episode",
+		ItemID:            "tvdb:1:s1e1",
+		SeriesName:        "Show",
+		PlaybackSessionID: "direct:first-source",
+	}
+	service.HandlePlaybackUpdate("profile", update, 95)
+
+	// Stream migration: new source path, new session, resumed near the end.
+	update.PlaybackSessionID = "direct:migrated-source"
+	service.HandlePlaybackUpdate("profile", update, 96)
+	// Rewatch from the start is a fresh viewing and still notifies.
+	update.PlaybackSessionID = "direct:rewatch"
+	service.HandlePlaybackUpdate("profile", update, 1)
+
+	service.sessionMu.Lock()
+	defer service.sessionMu.Unlock()
+	if s := service.sessions["profile\x00direct:migrated-source"]; !s.suppressed || !s.watched {
+		t.Fatalf("migrated session = %+v, want suppressed and watched", s)
+	}
+	if s := service.sessions["profile\x00direct:rewatch"]; s.suppressed || s.watched {
+		t.Fatalf("rewatch session = %+v, want active", s)
+	}
+}
