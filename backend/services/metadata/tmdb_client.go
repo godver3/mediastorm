@@ -203,7 +203,7 @@ func (c *tmdbClient) doGET(ctx context.Context, endpoint string, v any) error {
 			return err
 		}
 
-		resp, err := c.httpc.Do(req)
+		resp, err := doRedacted(c.httpc, req)
 		if err != nil {
 			lastErr = err
 			log.Printf("[tmdb] http error (attempt %d/3): %v", attempt+1, err)
@@ -739,7 +739,7 @@ func (c *tmdbClient) isWhiteOnlySVGURL(ctx context.Context, imageURL string) boo
 		return false
 	}
 
-	resp, err := c.httpc.Do(req)
+	resp, err := doRedacted(c.httpc, req)
 	if err != nil {
 		log.Printf("[metadata] logo svg color: fetch failed: %v", err)
 		return false
@@ -970,7 +970,7 @@ func (c *tmdbClient) fetchBackdropVisualSignature(ctx context.Context, imageURL 
 	if err != nil {
 		return nil, err
 	}
-	resp, err := c.httpc.Do(req)
+	resp, err := doRedacted(c.httpc, req)
 	if err != nil {
 		return nil, err
 	}
@@ -1262,7 +1262,7 @@ func (c *tmdbClient) isImageDark(ctx context.Context, imageURL string) bool {
 		return false
 	}
 
-	resp, err := c.httpc.Do(req)
+	resp, err := doRedacted(c.httpc, req)
 	if err != nil {
 		log.Printf("[metadata] logo brightness: fetch failed: %v", err)
 		return false
@@ -2096,7 +2096,7 @@ func (c *tmdbClient) fetchTrailers(ctx context.Context, mediaType string, tmdbID
 	}
 	req.URL.RawQuery = q.Encode()
 
-	resp, err := c.httpc.Do(req)
+	resp, err := doRedacted(c.httpc, req)
 	if err != nil {
 		return nil, err
 	}
@@ -2178,7 +2178,7 @@ func (c *tmdbClient) fetchSeasonTrailers(ctx context.Context, tmdbID int64, seas
 	}
 	req.URL.RawQuery = q.Encode()
 
-	resp, err := c.httpc.Do(req)
+	resp, err := doRedacted(c.httpc, req)
 	if err != nil {
 		return nil, err
 	}
@@ -2443,7 +2443,7 @@ func (c *tmdbClient) fetchCollectionDetails(ctx context.Context, collectionID in
 	}
 	req.URL.RawQuery = q.Encode()
 
-	resp, err := c.httpc.Do(req)
+	resp, err := doRedacted(c.httpc, req)
 	if err != nil {
 		return nil, err
 	}
@@ -2831,7 +2831,7 @@ func (c *tmdbClient) fetchExternalID(ctx context.Context, mediaType string, tmdb
 			return "", err
 		}
 
-		resp, err := c.httpc.Do(req)
+		resp, err := doRedacted(c.httpc, req)
 		if err != nil {
 			lastErr = err
 			log.Printf("[tmdb] fetchExternalID http error (attempt %d/3): %v", attempt+1, err)
@@ -2906,7 +2906,7 @@ func (c *tmdbClient) findMovieByIMDBID(ctx context.Context, imdbID string) (int6
 			return 0, err
 		}
 
-		resp, err := c.httpc.Do(req)
+		resp, err := doRedacted(c.httpc, req)
 		if err != nil {
 			if ctx.Err() != nil {
 				return 0, ctx.Err() // context canceled — don't retry
@@ -2989,7 +2989,7 @@ func (c *tmdbClient) findTVByIMDBID(ctx context.Context, imdbID string) (int64, 
 			return 0, err
 		}
 
-		resp, err := c.httpc.Do(req)
+		resp, err := doRedacted(c.httpc, req)
 		if err != nil {
 			if ctx.Err() != nil {
 				return 0, ctx.Err()

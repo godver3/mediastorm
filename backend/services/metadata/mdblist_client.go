@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"novastream/internal/apiusage"
+	"novastream/internal/urlredact"
 	"novastream/models"
 
 	"golang.org/x/sync/singleflight"
@@ -166,7 +167,7 @@ func (c *mdblistClient) GetRatings(ctx context.Context, imdbID string, mediaType
 			return nil, fmt.Errorf("create request: %w", err)
 		}
 
-		resp, err := c.httpClient.Do(req)
+		resp, err := doRedacted(c.httpClient, req)
 		if err != nil {
 			lastErr = fmt.Errorf("http request: %w", err)
 			log.Printf("[mdblist] http request error (attempt %d/3): %v", attempt+1, err)
@@ -197,7 +198,7 @@ func (c *mdblistClient) GetRatings(ctx context.Context, imdbID string, mediaType
 
 		if resp.StatusCode != http.StatusOK {
 			resp.Body.Close()
-			log.Printf("[mdblist] unexpected status %d for %s", resp.StatusCode, url)
+			log.Printf("[mdblist] unexpected status %d for %s", resp.StatusCode, urlredact.String(url))
 			return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
 		}
 
@@ -321,7 +322,7 @@ func (c *mdblistClient) fetchAllRatings(ctx context.Context, cacheKey, imdbID, m
 			return nil, fmt.Errorf("create request: %w", err)
 		}
 
-		resp, err := c.httpClient.Do(req)
+		resp, err := doRedacted(c.httpClient, req)
 		if err != nil {
 			lastErr = fmt.Errorf("http request: %w", err)
 			log.Printf("[mdblist] http request error (attempt %d/3): %v", attempt+1, err)

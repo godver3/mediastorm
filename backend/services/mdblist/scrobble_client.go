@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"novastream/internal/urlredact"
 	"sync"
 	"time"
 
@@ -206,7 +207,7 @@ func (c *ScrobbleClient) syncWatchedDetailed(path string, req SyncWatchedRequest
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return result, fmt.Errorf("sync watched state: %w", err)
+		return result, fmt.Errorf("sync watched state: %w", urlredact.Error(err))
 	}
 	defer resp.Body.Close()
 
@@ -275,7 +276,7 @@ func (c *ScrobbleClient) removeMatchingPlays(mediaType string, matches func(watc
 		}
 		resp, err := c.httpClient.Do(httpReq)
 		if err != nil {
-			return fmt.Errorf("list watched plays: %w", err)
+			return fmt.Errorf("list watched plays: %w", urlredact.Error(err))
 		}
 		var page watchedPlaysResponse
 		if resp.StatusCode >= 400 {
@@ -322,7 +323,7 @@ func (c *ScrobbleClient) removeMatchingPlays(mediaType string, matches func(watc
 	httpReq.Header.Set("Content-Type", "application/json")
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return fmt.Errorf("remove watched plays: %w", err)
+		return fmt.Errorf("remove watched plays: %w", urlredact.Error(err))
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
@@ -366,7 +367,7 @@ func (c *ScrobbleClient) scrobble(action string, req ScrobbleRequest) error {
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return fmt.Errorf("scrobble/%s: %w", action, err)
+		return fmt.Errorf("scrobble/%s: %w", action, urlredact.Error(err))
 	}
 	defer resp.Body.Close()
 
@@ -403,7 +404,7 @@ func (c *ScrobbleClient) GetUserLists(apiKey string) ([]UserList, error) {
 	url := fmt.Sprintf("%s/lists/user?apikey=%s", baseURL, apiKey)
 	resp, err := c.httpClient.Get(url)
 	if err != nil {
-		return nil, fmt.Errorf("fetch user lists: %w", err)
+		return nil, fmt.Errorf("fetch user lists: %w", urlredact.Error(err))
 	}
 	defer resp.Body.Close()
 
@@ -423,7 +424,7 @@ func (c *ScrobbleClient) GetListItems(apiKey string, listID int) ([]ListItem, er
 	url := fmt.Sprintf("%s/lists/%d/items?apikey=%s", baseURL, listID, apiKey)
 	resp, err := c.httpClient.Get(url)
 	if err != nil {
-		return nil, fmt.Errorf("fetch list items: %w", err)
+		return nil, fmt.Errorf("fetch list items: %w", urlredact.Error(err))
 	}
 	defer resp.Body.Close()
 
@@ -443,7 +444,7 @@ func (c *ScrobbleClient) GetWatchlist(apiKey string) ([]ListItem, error) {
 	url := fmt.Sprintf("%s/user/watchlist?apikey=%s", baseURL, apiKey)
 	resp, err := c.httpClient.Get(url)
 	if err != nil {
-		return nil, fmt.Errorf("fetch watchlist: %w", err)
+		return nil, fmt.Errorf("fetch watchlist: %w", urlredact.Error(err))
 	}
 	defer resp.Body.Close()
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"novastream/internal/urlredact"
 	"strings"
 	"time"
 )
@@ -190,7 +191,7 @@ func (c *AllDebridClient) GetAccountInfo(ctx context.Context) (*AccountInfo, err
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("user request failed: %w", err)
+		return nil, fmt.Errorf("user request failed: %w", urlredact.Error(err))
 	}
 	defer resp.Body.Close()
 

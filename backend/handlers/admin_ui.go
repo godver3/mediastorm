@@ -45,6 +45,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
+	"novastream/internal/urlredact"
 	"novastream/models"
 	"novastream/services/accounts"
 	"novastream/services/calendar"
@@ -9628,7 +9629,7 @@ func (h *AdminUIHandler) TestMetadata(w http.ResponseWriter, r *http.Request) {
 		tmdbReq, _ := http.NewRequest(http.MethodGet, "https://api.themoviedb.org/3/configuration?api_key="+req.TMDBApiKey, nil)
 		resp, err := apiusage.Do(client, "TMDB", "Credential validation", tmdbReq)
 		if err != nil {
-			results = append(results, providerResult{Provider: "TMDB", Success: false, Error: err.Error()})
+			results = append(results, providerResult{Provider: "TMDB", Success: false, Error: urlredact.Error(err).Error()})
 			allSuccess = false
 		} else {
 			resp.Body.Close()
@@ -9660,7 +9661,7 @@ func (h *AdminUIHandler) TestMetadata(w http.ResponseWriter, r *http.Request) {
 			resp, err = apiusage.Do(client, providerName, "Credential validation", aiReq.WithContext(r.Context()))
 		}
 		if err != nil {
-			results = append(results, providerResult{Provider: providerName, Success: false, Error: err.Error()})
+			results = append(results, providerResult{Provider: providerName, Success: false, Error: urlredact.Error(err).Error()})
 			allSuccess = false
 		} else {
 			resp.Body.Close()
@@ -9727,7 +9728,7 @@ func (h *AdminUIHandler) TestMDBList(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": false,
-			"error":   fmt.Sprintf("Connection failed: %v", err),
+			"error":   fmt.Sprintf("Connection failed: %v", urlredact.Error(err)),
 		})
 		return
 	}
