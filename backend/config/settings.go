@@ -3537,6 +3537,15 @@ func (m *Manager) saveLocked(s Settings) error {
 		_ = os.Remove(tmp)
 		return err
 	}
+	// CreateTemp creates the file 0600; keep the existing file's mode.
+	mode := os.FileMode(0o644)
+	if info, err := os.Stat(m.path); err == nil {
+		mode = info.Mode().Perm()
+	}
+	if err := os.Chmod(tmp, mode); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
 	if err := os.Rename(tmp, m.path); err != nil {
 		_ = os.Remove(tmp)
 		return err
