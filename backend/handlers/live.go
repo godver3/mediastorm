@@ -524,7 +524,7 @@ func (h *LiveHandler) FetchPlaylist(w http.ResponseWriter, r *http.Request) {
 }
 
 // liveStoppedMessage is the refusal a player shows for a channel stopped from the dashboard.
-const liveStoppedMessage = "Playback was stopped from the server dashboard."
+const liveStoppedMessage = "The server admin stopped this playback."
 
 // writeLivePlaybackStopped refuses a live tune or stream with the error envelope
 // the apps show as is.
