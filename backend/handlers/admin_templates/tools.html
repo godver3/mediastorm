@@ -4298,7 +4298,7 @@
             return `
                 <div style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; padding: 0.75rem; margin-bottom: 0.5rem; background: var(--bg-surface); border-radius: 8px; border: 1px solid var(--border); gap: 0.5rem;">
                     <div style="display: flex; align-items: center; gap: 0.75rem; min-width: 120px;">
-                        <div style="width: 36px; height: 36px; border-radius: 50%; background: ${profile.color || 'var(--bg-elevated)'}; display: flex; align-items: center; justify-content: center; font-weight: 600; color: white; flex-shrink: 0;">
+                        <div style="width: 36px; height: 36px; border-radius: 50%; background: ${safeProfileColor(profile.color, 'var(--bg-elevated)')}; display: flex; align-items: center; justify-content: center; font-weight: 600; color: white; flex-shrink: 0;">
                             ${profile.name.charAt(0).toUpperCase()}
                         </div>
                         <span style="font-weight: 500;">${escapeHtml(profile.name)}</span>
@@ -4812,6 +4812,9 @@
         traktWatchlistSelectedItems.clear();
     }
 
+function safeProfileColor(c, fallback) {
+    return (typeof c === 'string' && /^(#[0-9a-fA-F]{3,8}|[a-zA-Z]{1,32})$/.test(c)) ? c : fallback;
+}
     function escapeHtml(text) {
         const div = document.createElement('div');
         div.textContent = text;

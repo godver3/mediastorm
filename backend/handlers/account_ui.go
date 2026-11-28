@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"log"
@@ -754,7 +755,9 @@ func (h *AccountUIHandler) CreateProfile(w http.ResponseWriter, r *http.Request)
 	}
 
 	if req.Color != "" {
-		profile, _ = h.usersService.SetColor(profile.ID, req.Color)
+		if colored, err := h.usersService.SetColor(profile.ID, req.Color); err == nil {
+			profile = colored
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -868,7 +871,11 @@ func (h *AccountUIHandler) SetProfileColor(w http.ResponseWriter, r *http.Reques
 
 	profile, err := h.usersService.SetColor(profileID, req.Color)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		status := http.StatusInternalServerError
+		if errors.Is(err, users.ErrInvalidColor) {
+			status = http.StatusBadRequest
+		}
+		http.Error(w, err.Error(), status)
 		return
 	}
 

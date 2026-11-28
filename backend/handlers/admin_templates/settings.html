@@ -8060,6 +8060,9 @@
     });
 
     // Helper to escape HTML
+function safeProfileColor(c, fallback) {
+    return (typeof c === 'string' && /^(#[0-9a-fA-F]{3,8}|[a-zA-Z]{1,32})$/.test(c)) ? c : fallback;
+}
     function escapeHtml(text) {
         const div = document.createElement('div');
         div.textContent = text;
@@ -14568,7 +14571,7 @@
 
             // Render profiles for this account
             const profilesListHtml = (account.profiles || []).map(profile => {
-                const avatarColor = profile.color || '#3B82F6';
+                const avatarColor = safeProfileColor(profile.color, '#3B82F6');
                 const profileInitial = (profile.name || 'P').charAt(0).toUpperCase();
 
                 // Account selector for reassignment
@@ -14949,7 +14952,7 @@
         }
 
         const profilesHtml = profilesData.map(profile => {
-            const avatarColor = profile.color || '#3B82F6';
+            const avatarColor = safeProfileColor(profile.color, '#3B82F6');
             const initial = (profile.name || 'U').charAt(0).toUpperCase();
             const pinStatus = profile.hasPin
                 ? '<span style="display: inline-flex; align-items: center; gap: 0.25rem; color: var(--success); font-size: 0.875rem;">' + icons.lock + ' PIN Protected</span>'

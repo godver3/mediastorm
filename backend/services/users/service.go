@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -27,6 +28,7 @@ var (
 	ErrStorageDirRequired = errors.New("storage directory not provided")
 	ErrNameRequired       = errors.New("name is required")
 	ErrUserNotFound       = errors.New("user not found")
+	ErrInvalidColor       = errors.New("invalid color: use #rgb, #rrggbb, #rrggbbaa or a plain color name")
 	ErrActivityPrivacy    = errors.New("activity privacy must be not_shared, shared_anonymous, or shared")
 	ErrPinRequired        = errors.New("PIN is required")
 	ErrPinInvalid         = errors.New("invalid PIN")
@@ -303,7 +305,12 @@ func (s *Service) SetColor(id, color string) (models.User, error) {
 		return models.User{}, ErrUserNotFound
 	}
 
-	user.Color = strings.TrimSpace(color)
+	color = strings.TrimSpace(color)
+	if !validColor(color) {
+		return models.User{}, ErrInvalidColor
+	}
+
+	user.Color = color
 	user.UpdatedAt = time.Now().UTC()
 	s.users[id] = user
 
@@ -1479,4 +1486,15 @@ func (s *Service) syncToDB() error {
 		}
 		return nil
 	})
+}
+
+var (
+	hexColorRe  = regexp.MustCompile(`^#([0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$`)
+	nameColorRe = regexp.MustCompile(`^[a-zA-Z]{1,32}$`)
+)
+
+// validColor reports whether color is safe to embed in a CSS value: empty,
+// a hex color, or a plain color name.
+func validColor(color string) bool {
+	return color == "" || hexColorRe.MatchString(color) || nameColorRe.MatchString(color)
 }

@@ -7578,6 +7578,8 @@ func (h *AdminUIHandler) ClearProfilePin(w http.ResponseWriter, r *http.Request)
 		status := http.StatusInternalServerError
 		if strings.Contains(err.Error(), "not found") {
 			status = http.StatusNotFound
+		} else if errors.Is(err, users.ErrInvalidColor) {
+			status = http.StatusBadRequest
 		}
 		http.Error(w, err.Error(), status)
 		return

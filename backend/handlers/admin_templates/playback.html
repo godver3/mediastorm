@@ -1692,6 +1692,9 @@
         return response.json();
     }
 
+function safeProfileColor(c, fallback) {
+    return (typeof c === 'string' && /^(#[0-9a-fA-F]{3,8}|[a-zA-Z]{1,32})$/.test(c)) ? c : fallback;
+}
     function escapeHtml(value) {
         return String(value ?? '')
             .replace(/&/g, '&amp;')
@@ -1734,7 +1737,7 @@
         }
         list.innerHTML = profiles.map((profile) => {
             const active = profile.id === activeProfileId ? ' active' : '';
-            const color = profile.color || '#6366f1';
+            const color = safeProfileColor(profile.color, '#6366f1');
             const initial = escapeHtml((profile.name || '?').slice(0, 1).toUpperCase());
             return `
                 <button class="profile-option${active}" onclick="selectProfile('${escapeHtml(profile.id)}')">

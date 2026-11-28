@@ -351,6 +351,8 @@ func (h *UsersHandler) SetColor(w http.ResponseWriter, r *http.Request) {
 		status := http.StatusInternalServerError
 		if errors.Is(err, users.ErrUserNotFound) {
 			status = http.StatusNotFound
+		} else if errors.Is(err, users.ErrInvalidColor) {
+			status = http.StatusBadRequest
 		}
 		http.Error(w, err.Error(), status)
 		return
