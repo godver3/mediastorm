@@ -237,8 +237,26 @@ func (s *UsenetEngineServer) enqueue(fileName string, size int64) (*engineServer
 			active++
 		}
 	}
-	if active >= engineServerMaxActive || len(s.jobs) >= engineServerMaxJobs {
+	if active >= engineServerMaxActive {
 		return nil, errors.New("engine queue is full")
+	}
+	if len(s.jobs) >= engineServerMaxJobs {
+		// Finished jobs are kept for retention but clients rarely delete them;
+		// evict the oldest finished one rather than refusing new work.
+		var oldestID string
+		var oldest time.Time
+		for id, job := range s.jobs {
+			if job.FinishedAt.IsZero() {
+				continue
+			}
+			if oldestID == "" || job.FinishedAt.Before(oldest) {
+				oldestID, oldest = id, job.FinishedAt
+			}
+		}
+		if oldestID == "" {
+			return nil, errors.New("engine queue is full")
+		}
+		delete(s.jobs, oldestID)
 	}
 	job := &engineServerJob{ID: id, FileName: fileName, Status: "Queued", SizeBytes: size, CreatedAt: s.now()}
 	s.jobs[id] = job
