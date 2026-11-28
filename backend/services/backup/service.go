@@ -843,8 +843,6 @@ type localMediaItemExport struct {
 //   - import_queue, file_health, media_files, queue_stats
 //   - goose_db_version, app_data_migrations
 //   - quality_snapshot_cache (downloaded TRaSH archives, refetched on demand)
-//   - title_quality_presets (presets remembered per title and device; the
-//     next pick remembers again)
 //
 // Global app settings (scheduled tasks / automations / scrapers / indexers / etc.)
 // live in settings.json and are backed up as a separate archive member.
@@ -880,6 +878,13 @@ type databaseExport struct {
 	Recordings               []models.Recording                     `json:"recordings,omitempty"`
 	NumbersStationProgress   []models.NumbersStationProgress        `json:"numbersStationProgress"`
 	QualityPresets           []*qualityprofiles.Preset              `json:"qualityPresets,omitempty"`
+	// The sections below are always written (as [] when empty, never omitted)
+	// so restore can tell "backup has none" from "backup predates the section":
+	// a nil slice after decoding means an older backup, and the existing rows
+	// are then left in place rather than cleared.
+	TitleQualityPresets    []qualityprofiles.TitlePresetRecord `json:"titleQualityPresets"`
+	SportsTeams            []models.SportsTeamRecord           `json:"sportsTeams"`
+	SportsTeamChannelLinks []models.SportsTeamChannelLink      `json:"sportsTeamChannelLinks"`
 }
 
 type customListExport struct {
@@ -919,6 +924,9 @@ var databaseExportSections = []string{
 	"recordings",
 	"numbersStationProgress",
 	"qualityPresets",
+	"titleQualityPresets",
+	"sportsTeams",
+	"sportsTeamChannelLinks",
 }
 
 // exportDatabaseBytes queries durable tables and returns the export as JSON bytes.
@@ -1141,6 +1149,24 @@ func (s *Service) exportDatabaseBytes() ([]byte, error) {
 	}
 	export.QualityPresets = presets
 
+	titlePresets, err := s.store.QualityPresets().ListTitlePresets(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("export title quality presets: %w", err)
+	}
+	export.TitleQualityPresets = nonNilSlice(titlePresets)
+
+	sportsTeams, err := s.store.SportsLinks().ListAllTeams(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("export sports teams: %w", err)
+	}
+	export.SportsTeams = nonNilSlice(sportsTeams)
+
+	sportsLinks, err := s.store.SportsLinks().ListAllLinks(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("export sports team channel links: %w", err)
+	}
+	export.SportsTeamChannelLinks = nonNilSlice(sportsLinks)
+
 	export.ContentPreferences = make(map[string][]models.ContentPreference)
 	export.CustomLists = make(map[string][]customListExport)
 	for _, u := range users {
@@ -1182,6 +1208,9 @@ func (s *Service) importDatabaseBytes(data []byte) error {
 	err := s.store.WithTx(ctx, func(tx *datastore.Tx) error {
 		// Clear durable data that does not cascade from users/accounts first.
 		if err := clearNonCascadedBackupTables(ctx, tx); err != nil {
+			return err
+		}
+		if err := clearSectionedBackupTables(ctx, tx, &export); err != nil {
 			return err
 		}
 
@@ -1464,6 +1493,32 @@ func (s *Service) importDatabaseBytes(data []byte) error {
 				return fmt.Errorf("restore quality preset %s: %w", preset.ID, err)
 			}
 		}
+		// Title presets after the presets they name (no FK, but keep the order).
+		for _, rec := range export.TitleQualityPresets {
+			if rec.UserID == "" || rec.ContentID == "" || rec.PresetID == "" {
+				continue
+			}
+			if err := tx.QualityPresets().SetTitlePreset(ctx, rec.UserID, rec.ClientID, rec.ContentID, rec.PresetID); err != nil {
+				return fmt.Errorf("restore title quality preset %s/%s: %w", rec.UserID, rec.ContentID, err)
+			}
+		}
+		// Teams first: links reference them via team_id (FK). A link whose team
+		// is missing from the backup is skipped rather than failing the restore.
+		restoredTeams := make(map[string]bool, len(export.SportsTeams))
+		for _, team := range export.SportsTeams {
+			if err := tx.SportsLinks().UpsertTeam(ctx, team); err != nil {
+				return fmt.Errorf("restore sports team %s: %w", team.ID, err)
+			}
+			restoredTeams[team.ID] = true
+		}
+		for _, link := range export.SportsTeamChannelLinks {
+			if !restoredTeams[link.TeamID] {
+				continue
+			}
+			if err := tx.SportsLinks().RestoreLink(ctx, link); err != nil {
+				return fmt.Errorf("restore sports team channel link %s: %w", link.ID, err)
+			}
+		}
 		return nil
 	})
 	if err != nil {
@@ -1473,6 +1528,37 @@ func (s *Service) importDatabaseBytes(data []byte) error {
 	log.Printf("[backup] Database restored: %d accounts, %d users, %d sessions, %d notification channels, %d local libraries, %d remote libraries",
 		len(export.Accounts), len(export.Users), len(export.Sessions),
 		len(export.NotificationChannels), len(export.LocalMediaLibraries), len(export.RemoteMediaLibraries))
+	return nil
+}
+
+// nonNilSlice returns s, or an empty slice when s is nil, so the section is
+// marshaled as [] instead of null.
+func nonNilSlice[T any](s []T) []T {
+	if s == nil {
+		return []T{}
+	}
+	return s
+}
+
+// clearSectionedBackupTables clears tables whose backup section is present in
+// the export. Backups made before a section existed leave that table as is.
+func clearSectionedBackupTables(ctx context.Context, tx *datastore.Tx, export *databaseExport) error {
+	if export.TitleQualityPresets != nil {
+		existing, err := tx.QualityPresets().ListTitlePresets(ctx)
+		if err != nil {
+			return fmt.Errorf("list title quality presets for clear: %w", err)
+		}
+		for _, rec := range existing {
+			if err := tx.QualityPresets().SetTitlePreset(ctx, rec.UserID, rec.ClientID, rec.ContentID, ""); err != nil {
+				return fmt.Errorf("clear title quality preset: %w", err)
+			}
+		}
+	}
+	if export.SportsTeams != nil || export.SportsTeamChannelLinks != nil {
+		if err := tx.SportsLinks().DeleteAllTeams(ctx); err != nil {
+			return fmt.Errorf("clear sports teams: %w", err)
+		}
+	}
 	return nil
 }
 

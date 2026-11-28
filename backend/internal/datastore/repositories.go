@@ -443,4 +443,12 @@ type SportsLinksRepository interface {
 	DeleteLink(ctx context.Context, teamID, linkID string) error
 	// ReorderBackups rewrites backup positions to match the given link ID order.
 	ReorderBackups(ctx context.Context, teamID string, orderedLinkIDs []string) error
+
+	// ListAllTeams and ListAllLinks return every team / channel link (for backups).
+	ListAllTeams(ctx context.Context) ([]models.SportsTeamRecord, error)
+	ListAllLinks(ctx context.Context) ([]models.SportsTeamChannelLink, error)
+	// RestoreLink inserts a link exactly as exported (id, slot, position, provenance).
+	RestoreLink(ctx context.Context, link models.SportsTeamChannelLink) error
+	// DeleteAllTeams removes every team; links cascade.
+	DeleteAllTeams(ctx context.Context) error
 }

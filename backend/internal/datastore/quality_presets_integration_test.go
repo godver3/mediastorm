@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"novastream/internal/arr"
+	"novastream/models"
 	"novastream/services/qualityprofiles"
 )
 
@@ -123,5 +124,62 @@ func TestQualityPresetStoreIntegration(t *testing.T) {
 	}
 	if id, _ := store.GetTitlePreset(ctx, "u1", "tv", "tmdb:tv:1"); id != "" {
 		t.Errorf("after forgetting: %q", id)
+	}
+
+	// ListTitlePresets returns every remembered pick (backups).
+	_, _ = pool.Exec(ctx, `DELETE FROM title_quality_presets`)
+	_ = store.SetTitlePreset(ctx, "u1", "tv", "tmdb:tv:1", "p1")
+	_ = store.SetTitlePreset(ctx, "u2", "", "tmdb:movie:2", "p2")
+	recs, err := store.ListTitlePresets(ctx)
+	if err != nil || len(recs) != 2 || recs[0].UserID != "u1" || recs[1].PresetID != "p2" || recs[1].ClientID != "" {
+		t.Fatalf("list title presets: %+v %v", recs, err)
+	}
+}
+
+// TestSportsLinksBackupIntegration exercises the list/restore/clear methods
+// used by backups. Uses QUALITY_PRESETS_TEST_DB_URL (a disposable database).
+func TestSportsLinksBackupIntegration(t *testing.T) {
+	dsn := os.Getenv("QUALITY_PRESETS_TEST_DB_URL")
+	if dsn == "" {
+		t.Skip("set QUALITY_PRESETS_TEST_DB_URL to run against Postgres")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	if err := runMigrations(ctx, pool); err != nil {
+		t.Fatalf("migrations: %v", err)
+	}
+	repo := &pgSportsLinksRepo{pool: pool}
+	if err := repo.DeleteAllTeams(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpsertTeam(ctx, models.SportsTeamRecord{ID: "mlb:1", League: "mlb", EspnTeamID: "1", Name: "A"}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	link := models.SportsTeamChannelLink{
+		ID: "l1", TeamID: "mlb:1", Slot: models.SportsLinkSlotBackup, Position: 3,
+		ChannelName: "Ch", ChannelURL: "http://x", AutoLinked: true, LinkConfidence: 0.9,
+		MatchReason: "name", CreatedAt: now, UpdatedAt: now,
+	}
+	if err := repo.RestoreLink(ctx, link); err != nil {
+		t.Fatal(err)
+	}
+	teams, err := repo.ListAllTeams(ctx)
+	if err != nil || len(teams) != 1 {
+		t.Fatalf("teams: %+v %v", teams, err)
+	}
+	links, err := repo.ListAllLinks(ctx)
+	if err != nil || len(links) != 1 || links[0].Position != 3 || links[0].Slot != models.SportsLinkSlotBackup || !links[0].AutoLinked {
+		t.Fatalf("links: %+v %v", links, err)
+	}
+	if err := repo.DeleteAllTeams(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if links, _ := repo.ListAllLinks(ctx); len(links) != 0 {
+		t.Fatalf("links should cascade: %+v", links)
 	}
 }

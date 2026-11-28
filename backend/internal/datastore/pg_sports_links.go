@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -253,6 +254,74 @@ func (r *pgSportsLinksRepo) ReorderBackups(ctx context.Context, teamID string, o
 		orderedLinkIDs, positions, teamID)
 	if err != nil {
 		return fmt.Errorf("reorder backup channel links (final pass): %w", err)
+	}
+	return nil
+}
+
+func (r *pgSportsLinksRepo) ListAllTeams(ctx context.Context) ([]models.SportsTeamRecord, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, league, espn_team_id, name, location, nickname, abbreviation, logo_url, updated_at
+		FROM sports_teams ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("list all sports teams: %w", err)
+	}
+	defer rows.Close()
+	teams := []models.SportsTeamRecord{}
+	for rows.Next() {
+		var t models.SportsTeamRecord
+		if err := rows.Scan(&t.ID, &t.League, &t.EspnTeamID, &t.Name, &t.Location, &t.Nickname, &t.Abbreviation, &t.LogoURL, &t.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan sports team: %w", err)
+		}
+		teams = append(teams, t)
+	}
+	return teams, rows.Err()
+}
+
+func (r *pgSportsLinksRepo) ListAllLinks(ctx context.Context) ([]models.SportsTeamChannelLink, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+sportsLinkColumns+`
+		FROM sports_team_channel_links
+		ORDER BY team_id, slot DESC, position ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("list all team channel links: %w", err)
+	}
+	defer rows.Close()
+	links := []models.SportsTeamChannelLink{}
+	for rows.Next() {
+		l, err := scanSportsLink(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan team channel link: %w", err)
+		}
+		links = append(links, l)
+	}
+	return links, rows.Err()
+}
+
+func (r *pgSportsLinksRepo) RestoreLink(ctx context.Context, link models.SportsTeamChannelLink) error {
+	if link.ID == "" {
+		link.ID = uuid.NewString()
+	}
+	if link.CreatedAt.IsZero() {
+		link.CreatedAt = time.Now().UTC()
+	}
+	if link.UpdatedAt.IsZero() {
+		link.UpdatedAt = link.CreatedAt
+	}
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO sports_team_channel_links (`+sportsLinkColumns+`)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
+		link.ID, link.TeamID, string(link.Slot), link.Position, link.ChannelTvgID, link.ChannelName, link.ChannelURL,
+		link.ChannelLogo, link.SourceID, link.SourceName, link.AutoLinked, link.LinkConfidence, link.MatchReason,
+		link.LastVerifiedAt, link.CreatedAt, link.UpdatedAt)
+	if err != nil {
+		return fmt.Errorf("restore channel link: %w", err)
+	}
+	return nil
+}
+
+func (r *pgSportsLinksRepo) DeleteAllTeams(ctx context.Context) error {
+	if _, err := r.pool.Exec(ctx, `DELETE FROM sports_teams`); err != nil {
+		return fmt.Errorf("delete all sports teams: %w", err)
 	}
 	return nil
 }

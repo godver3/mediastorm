@@ -694,6 +694,9 @@ func TestDatabaseExportSectionsCoverDurableTables(t *testing.T) {
 		"recordings",
 		"recordingRules",
 		"qualityPresets",
+		"titleQualityPresets",
+		"sportsTeams",
+		"sportsTeamChannelLinks",
 	} {
 		if !required[want] {
 			t.Errorf("databaseExportSections missing required durable section %q", want)
@@ -767,7 +770,13 @@ func TestDatabaseExportSectionsCoverDurableTables(t *testing.T) {
 			Title: "Show", SourceURL: "http://example.invalid", StartAt: now, EndAt: now.Add(time.Hour),
 			CreatedAt: now, UpdatedAt: now,
 		}},
-		QualityPresets: []*qualityprofiles.Preset{{ID: "qp1", App: "sonarr", Name: "German HD", CreatedAt: now, UpdatedAt: now}},
+		QualityPresets:      []*qualityprofiles.Preset{{ID: "qp1", App: "sonarr", Name: "German HD", CreatedAt: now, UpdatedAt: now}},
+		TitleQualityPresets: []qualityprofiles.TitlePresetRecord{{UserID: "default", ClientID: "tv", ContentID: "tmdb:tv:1", PresetID: "qp1", UpdatedAt: now}},
+		SportsTeams:         []models.SportsTeamRecord{{ID: "mlb:1", League: "mlb", EspnTeamID: "1", Name: "Team", UpdatedAt: now}},
+		SportsTeamChannelLinks: []models.SportsTeamChannelLink{{
+			ID: "sl1", TeamID: "mlb:1", Slot: models.SportsLinkSlotPrimary, ChannelName: "Ch",
+			ChannelURL: "http://example.invalid", CreatedAt: now, UpdatedAt: now,
+		}},
 	}
 
 	raw, err := json.Marshal(export)
@@ -823,5 +832,33 @@ func TestBackupFilenameFormat(t *testing.T) {
 	}
 	if info.Filename[len(info.Filename)-4:] != ".zip" {
 		t.Errorf("expected filename to end with .zip, got %s", info.Filename)
+	}
+}
+
+func TestDatabaseExportNewSectionsDistinguishOldBackups(t *testing.T) {
+	// A backup made before these sections existed decodes them as nil, so
+	// restore leaves the current rows alone.
+	var old databaseExport
+	if err := json.Unmarshal([]byte(`{"version":"2.1","accounts":[]}`), &old); err != nil {
+		t.Fatal(err)
+	}
+	if old.TitleQualityPresets != nil || old.SportsTeams != nil || old.SportsTeamChannelLinks != nil {
+		t.Fatalf("old backup sections should decode as nil: %+v", old)
+	}
+	// A new backup with nothing in them still writes [] and decodes non-nil.
+	raw, err := json.Marshal(databaseExport{
+		TitleQualityPresets:    nonNilSlice[qualityprofiles.TitlePresetRecord](nil),
+		SportsTeams:            nonNilSlice[models.SportsTeamRecord](nil),
+		SportsTeamChannelLinks: nonNilSlice[models.SportsTeamChannelLink](nil),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fresh databaseExport
+	if err := json.Unmarshal(raw, &fresh); err != nil {
+		t.Fatal(err)
+	}
+	if fresh.TitleQualityPresets == nil || fresh.SportsTeams == nil || fresh.SportsTeamChannelLinks == nil {
+		t.Fatalf("empty new sections should decode as non-nil: %s", raw)
 	}
 }
