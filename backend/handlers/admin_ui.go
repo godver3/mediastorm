@@ -7579,8 +7579,6 @@ func (h *AdminUIHandler) ClearProfilePin(w http.ResponseWriter, r *http.Request)
 		status := http.StatusInternalServerError
 		if strings.Contains(err.Error(), "not found") {
 			status = http.StatusNotFound
-		} else if errors.Is(err, users.ErrInvalidColor) {
-			status = http.StatusBadRequest
 		}
 		http.Error(w, err.Error(), status)
 		return
@@ -7658,10 +7656,11 @@ func (h *AdminUIHandler) CreateProfile(w http.ResponseWriter, r *http.Request) {
 
 	// Set color if provided
 	if req.Color != "" {
-		user, err = h.usersService.SetColor(user.ID, req.Color)
-		if err != nil {
+		if colored, colorErr := h.usersService.SetColor(user.ID, req.Color); colorErr != nil {
 			// Log but don't fail - profile was created
-			log.Printf("[admin] failed to set color for new profile %s: %v", user.ID, err)
+			log.Printf("[admin] failed to set color for new profile %s: %v", user.ID, colorErr)
+		} else {
+			user = colored
 		}
 	}
 
@@ -7829,6 +7828,8 @@ func (h *AdminUIHandler) SetProfileColor(w http.ResponseWriter, r *http.Request)
 		status := http.StatusInternalServerError
 		if strings.Contains(err.Error(), "not found") {
 			status = http.StatusNotFound
+		} else if errors.Is(err, users.ErrInvalidColor) {
+			status = http.StatusBadRequest
 		}
 		http.Error(w, err.Error(), status)
 		return

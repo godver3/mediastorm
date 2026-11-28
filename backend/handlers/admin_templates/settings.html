@@ -8061,7 +8061,7 @@
 
     // Helper to escape HTML
 function safeProfileColor(c, fallback) {
-    return (typeof c === 'string' && /^(#[0-9a-fA-F]{3,8}|[a-zA-Z]{1,32})$/.test(c)) ? c : fallback;
+    return (typeof c === 'string' && /^(#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})|[a-zA-Z]{1,32})$/.test(c)) ? c : fallback;
 }
     function escapeHtml(text) {
         const div = document.createElement('div');
