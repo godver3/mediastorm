@@ -387,6 +387,7 @@ func (s *Service) StartBackgroundCacheManager(refreshInterval time.Duration) {
 	}
 	s.cacheStopCh = make(chan struct{})
 	go s.runRegionalDiscoveryWarmer(s.cacheStopCh)
+	go runCacheSweeper(s.cacheStopCh, s.cache, s.idCache, s.ratingsCache)
 
 	s.cacheStatusMu.Lock()
 	s.cacheStatus = CacheManagerStatus{
