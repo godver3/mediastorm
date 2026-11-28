@@ -40,6 +40,9 @@ type metadataService interface {
 	BatchSeriesTitleFields(context.Context, []models.SeriesDetailsQuery, []string) []models.BatchSeriesDetailsItem
 	MovieDetails(context.Context, models.MovieDetailsQuery) (*models.Title, error)
 	BatchMovieReleases(context.Context, []models.BatchMovieReleasesQuery) []models.BatchMovieReleasesItem
+	// CachedMovieReleases is the cache-only BatchMovieReleases; misses are
+	// queued for a background fill.
+	CachedMovieReleases(context.Context, []models.BatchMovieReleasesQuery) []models.BatchMovieReleasesItem
 	CollectionDetails(context.Context, int64) (*models.CollectionDetails, error)
 	Similar(context.Context, string, int64) ([]models.Title, error)
 	DiscoverByGenre(context.Context, string, int64, int, int) ([]models.TrendingItem, int, error)
@@ -517,8 +520,9 @@ func (h *MetadataHandler) Search(w http.ResponseWriter, r *http.Request) {
 		requestClientID(r),
 		unreleasedVisibilitySearch,
 	)
-	// Always load release windows: release badges need them even when unreleased titles are shown.
-	enrichSearchMovieReleaseVisibility(r.Context(), results, service)
+	// Hiding unreleased movies needs accurate windows, so fetch them; otherwise
+	// badges use cached windows only and misses are warmed in the background.
+	enrichSearchMovieReleaseVisibility(r.Context(), results, service, !policy.IncludeMovies)
 	results = filterSearchResultsByUnreleasedVisibility(results, policy)
 
 	// Apply kids rating filter if user is a kids profile with rating mode
@@ -2210,8 +2214,9 @@ func (h *MetadataHandler) TMDBList(w http.ResponseWriter, r *http.Request) {
 		policy.IncludeMovies = false
 		policy.IncludeShows = false
 	}
-	// Always load release windows: release badges need them even when unreleased titles are shown.
-	enrichTrendingMovieReleaseVisibility(r.Context(), items, service)
+	// Hiding unreleased movies needs accurate windows, so fetch them; otherwise
+	// badges use cached windows only and misses are warmed in the background.
+	enrichTrendingMovieReleaseVisibility(r.Context(), items, service, !policy.IncludeMovies)
 	items = filterTrendingItemsByUnreleasedVisibility(items, policy)
 	if hideWatched && userID != "" && h.HistoryService != nil {
 		items = filterWatchedItems(items, userID, h.HistoryService)
@@ -2298,8 +2303,9 @@ func (h *MetadataHandler) DiscoverByGenre(w http.ResponseWriter, r *http.Request
 		policy.IncludeMovies = false
 		policy.IncludeShows = false
 	}
-	// Always load release windows: release badges need them even when unreleased titles are shown.
-	enrichTrendingMovieReleaseVisibility(r.Context(), items, service)
+	// Hiding unreleased movies needs accurate windows, so fetch them; otherwise
+	// badges use cached windows only and misses are warmed in the background.
+	enrichTrendingMovieReleaseVisibility(r.Context(), items, service, !policy.IncludeMovies)
 	beforeVisibility := len(items)
 	items = filterTrendingItemsByUnreleasedVisibility(items, policy)
 	total -= beforeVisibility - len(items)
@@ -2387,8 +2393,9 @@ func (h *MetadataHandler) DiscoverByDecade(w http.ResponseWriter, r *http.Reques
 		policy.IncludeMovies = false
 		policy.IncludeShows = false
 	}
-	// Always load release windows: release badges need them even when unreleased titles are shown.
-	enrichTrendingMovieReleaseVisibility(r.Context(), items, service)
+	// Hiding unreleased movies needs accurate windows, so fetch them; otherwise
+	// badges use cached windows only and misses are warmed in the background.
+	enrichTrendingMovieReleaseVisibility(r.Context(), items, service, !policy.IncludeMovies)
 	beforeVisibility := len(items)
 	items = filterTrendingItemsByUnreleasedVisibility(items, policy)
 	total -= beforeVisibility - len(items)

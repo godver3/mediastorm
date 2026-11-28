@@ -6531,26 +6531,9 @@ func (s *Service) BatchMovieReleases(ctx context.Context, queries []models.Batch
 			continue
 		}
 
-		// Check the same cache written by enrichMovieReleases.
-		cacheID := cacheKey("tmdb", "movie", "releases", "v3", strconv.FormatInt(tmdbID, 10))
-		var cached cachedReleasesWithCert
-		if ok, _ := s.cache.get(cacheID, &cached); ok && len(cached.Releases) == 0 {
-			// Negative cache hit: TMDB has no release data for this movie.
-			// Report it as enrichMovieReleases would without queueing a fetch.
-			results[i].Status = models.MovieReleaseStatusUnknown
-			results[i].Error = "failed to fetch release data"
-			continue
-		} else if ok {
-			// Build a temporary title to use ensureMovieReleasePointers
-			tempTitle := &models.Title{
-				MediaType:     "movie",
-				Releases:      append([]models.Release(nil), cached.Releases...),
-				Certification: cached.Certification,
-			}
-			s.ensureMovieReleasePointers(tempTitle)
-			results[i].Status = tempTitle.Status
-			results[i].Theatrical = tempTitle.Theatrical
-			results[i].HomeRelease = tempTitle.HomeRelease
+		if item, hit := s.cachedMovieReleaseItem(tmdbID); hit {
+			item.Query = query
+			results[i] = item
 			continue
 		}
 

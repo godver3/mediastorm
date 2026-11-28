@@ -113,6 +113,9 @@ func (m *mockMetadataServiceDetailsBundle) BatchSeriesTitleFields(_ context.Cont
 func (m *mockMetadataServiceDetailsBundle) BatchMovieReleases(_ context.Context, _ []models.BatchMovieReleasesQuery) []models.BatchMovieReleasesItem {
 	return nil
 }
+func (m *mockMetadataServiceDetailsBundle) CachedMovieReleases(_ context.Context, _ []models.BatchMovieReleasesQuery) []models.BatchMovieReleasesItem {
+	return nil
+}
 func (m *mockMetadataServiceDetailsBundle) CollectionDetails(_ context.Context, _ int64) (*models.CollectionDetails, error) {
 	return nil, nil
 }

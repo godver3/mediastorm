@@ -176,3 +176,62 @@ func cachedSeriesRelease(title models.Title, seasons []models.SeriesSeason) (str
 	}
 	return status, date
 }
+
+// cachedMovieReleaseItem reads a movie's release windows from the release
+// cache written by enrichMovieReleases. hit is false when nothing is cached.
+// A negative cache entry (TMDB has no release data) is a hit with status
+// "unknown" so callers do not queue it for another fetch.
+func (s *Service) cachedMovieReleaseItem(tmdbID int64) (item models.BatchMovieReleasesItem, hit bool) {
+	if s == nil || s.cache == nil || tmdbID <= 0 {
+		return item, false
+	}
+	cacheID := cacheKey("tmdb", "movie", "releases", "v3", strconv.FormatInt(tmdbID, 10))
+	var cached cachedReleasesWithCert
+	if ok, _ := s.cache.get(cacheID, &cached); !ok {
+		return item, false
+	}
+	if len(cached.Releases) == 0 {
+		item.Status = models.MovieReleaseStatusUnknown
+		item.Error = "failed to fetch release data"
+		return item, true
+	}
+	tempTitle := &models.Title{
+		MediaType:     "movie",
+		Releases:      append([]models.Release(nil), cached.Releases...),
+		Certification: cached.Certification,
+	}
+	s.ensureMovieReleasePointers(tempTitle)
+	item.Status = tempTitle.Status
+	item.Theatrical = tempTitle.Theatrical
+	item.HomeRelease = tempTitle.HomeRelease
+	return item, true
+}
+
+// CachedMovieReleases is the cache-only form of BatchMovieReleases for
+// request paths (search, trending, discover, recommendations) that must not
+// wait on TMDB. Cache misses come back with status "unknown" and are queued
+// for the bounded, deduplicated background warmer, so a later request carries
+// the windows. IMDB-only queries are not resolved (that may call upstream).
+func (s *Service) CachedMovieReleases(_ context.Context, queries []models.BatchMovieReleasesQuery) []models.BatchMovieReleasesItem {
+	results := make([]models.BatchMovieReleasesItem, len(queries))
+	var misses []int64
+	for i, query := range queries {
+		tmdbID := query.TMDBID
+		if tmdbID <= 0 && strings.HasPrefix(query.TitleID, "tmdb:movie:") {
+			if id, err := strconv.ParseInt(strings.TrimPrefix(query.TitleID, "tmdb:movie:"), 10, 64); err == nil {
+				tmdbID = id
+			}
+		}
+		item, hit := s.cachedMovieReleaseItem(tmdbID)
+		item.Query = query
+		if !hit {
+			item.Status = models.MovieReleaseStatusUnknown
+			if tmdbID > 0 {
+				misses = append(misses, tmdbID)
+			}
+		}
+		results[i] = item
+	}
+	s.warmMovieReleasesAsync(misses)
+	return results
+}

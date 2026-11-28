@@ -173,7 +173,10 @@ func filterSearchResultsByUnreleasedVisibility(results []models.SearchResult, po
 
 // enrichSearchMovieReleaseVisibility replaces search's theatrical/year-only
 // status with full home-release windows before released-only filtering.
-func enrichSearchMovieReleaseVisibility(ctx context.Context, results []models.SearchResult, service metadataService) {
+// fetchMissing selects the provider-backed lookup (needed to filter unreleased
+// movies); otherwise only cached windows are used for badges and misses are
+// warmed in the background.
+func enrichSearchMovieReleaseVisibility(ctx context.Context, results []models.SearchResult, service metadataService, fetchMissing bool) {
 	if service == nil || len(results) == 0 {
 		return
 	}
@@ -194,7 +197,7 @@ func enrichSearchMovieReleaseVisibility(ctx context.Context, results []models.Se
 	if len(queries) == 0 {
 		return
 	}
-	items := service.BatchMovieReleases(ctx, queries)
+	items := lookupMovieReleases(ctx, service, queries, fetchMissing)
 	for i := range items {
 		if i >= len(indexes) {
 			break
@@ -219,7 +222,8 @@ func filterTrendingItemsByUnreleasedVisibility(items []models.TrendingItem, poli
 
 // enrichTrendingMovieReleaseVisibility replaces year-only discover status with
 // the full TMDB release windows before applying the released-only policy.
-func enrichTrendingMovieReleaseVisibility(ctx context.Context, items []models.TrendingItem, service metadataService) {
+// fetchMissing has the same meaning as for enrichSearchMovieReleaseVisibility.
+func enrichTrendingMovieReleaseVisibility(ctx context.Context, items []models.TrendingItem, service metadataService, fetchMissing bool) {
 	if service == nil || len(items) == 0 {
 		return
 	}
@@ -240,7 +244,7 @@ func enrichTrendingMovieReleaseVisibility(ctx context.Context, items []models.Tr
 	if len(queries) == 0 {
 		return
 	}
-	results := service.BatchMovieReleases(ctx, queries)
+	results := lookupMovieReleases(ctx, service, queries, fetchMissing)
 	for i := range results {
 		if i >= len(indexes) {
 			break
@@ -329,4 +333,13 @@ func applyMovieReleaseLookup(title *models.Title, item models.BatchMovieReleases
 	if item.HomeRelease != nil {
 		title.HomeRelease = item.HomeRelease
 	}
+}
+
+// lookupMovieReleases uses the provider-backed batch lookup only when
+// fetchMissing is set; request paths that only need badges stay cache-only.
+func lookupMovieReleases(ctx context.Context, service metadataService, queries []models.BatchMovieReleasesQuery, fetchMissing bool) []models.BatchMovieReleasesItem {
+	if fetchMissing {
+		return service.BatchMovieReleases(ctx, queries)
+	}
+	return service.CachedMovieReleases(ctx, queries)
 }
