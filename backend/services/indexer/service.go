@@ -4593,7 +4593,7 @@ func (s *Service) fetchTorznab(ctx context.Context, idx config.IndexerConfig, op
 	// HTTP 200 <error> document; surface its message instead of a generic
 	// "not an RSS feed" error.
 	if msg, isErr := ParseNewznabError(sanitized); isErr {
-		if newznabErrorTripsBreaker(sanitized) {
+		if NewznabErrorTripsBreaker(sanitized) {
 			until := breaker.RecordRateLimit(idx.Name, 0)
 			log.Printf("[provider-breaker] opened provider=%q after newznab API error until=%s", idx.Name, until.Format(time.RFC3339))
 		} else {
