@@ -233,20 +233,19 @@ func (h *MetadataHandler) writePersonalizedRecommendations(
 		requestClientID(r),
 		unreleasedVisibilityLists,
 	)
-	if !policy.IncludeMovies {
-		enrichTrendingMovieReleaseVisibility(r.Context(), response.Items, service)
-		movieReleases := make(map[int64]models.Title, len(response.Items))
-		for i := range response.Items {
-			if response.Items[i].Title.TMDBID > 0 && strings.EqualFold(response.Items[i].Title.MediaType, "movie") {
-				movieReleases[response.Items[i].Title.TMDBID] = response.Items[i].Title
-			}
+	// Always load release windows: release badges need them even when unreleased titles are shown.
+	enrichTrendingMovieReleaseVisibility(r.Context(), response.Items, service)
+	movieReleases := make(map[int64]models.Title, len(response.Items))
+	for i := range response.Items {
+		if response.Items[i].Title.TMDBID > 0 && strings.EqualFold(response.Items[i].Title.MediaType, "movie") {
+			movieReleases[response.Items[i].Title.TMDBID] = response.Items[i].Title
 		}
-		for i := range response.Movies {
-			if enriched, ok := movieReleases[response.Movies[i].Title.TMDBID]; ok {
-				response.Movies[i].Title.Status = enriched.Status
-				response.Movies[i].Title.Theatrical = enriched.Theatrical
-				response.Movies[i].Title.HomeRelease = enriched.HomeRelease
-			}
+	}
+	for i := range response.Movies {
+		if enriched, ok := movieReleases[response.Movies[i].Title.TMDBID]; ok {
+			response.Movies[i].Title.Status = enriched.Status
+			response.Movies[i].Title.Theatrical = enriched.Theatrical
+			response.Movies[i].Title.HomeRelease = enriched.HomeRelease
 		}
 	}
 	response = filterPersonalizedRecommendationsByUnreleasedVisibility(response, policy)

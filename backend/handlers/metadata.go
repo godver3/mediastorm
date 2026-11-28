@@ -517,9 +517,8 @@ func (h *MetadataHandler) Search(w http.ResponseWriter, r *http.Request) {
 		requestClientID(r),
 		unreleasedVisibilitySearch,
 	)
-	if !policy.IncludeMovies {
-		enrichSearchMovieReleaseVisibility(r.Context(), results, service)
-	}
+	// Always load release windows: release badges need them even when unreleased titles are shown.
+	enrichSearchMovieReleaseVisibility(r.Context(), results, service)
 	results = filterSearchResultsByUnreleasedVisibility(results, policy)
 
 	// Apply kids rating filter if user is a kids profile with rating mode
@@ -2211,9 +2210,8 @@ func (h *MetadataHandler) TMDBList(w http.ResponseWriter, r *http.Request) {
 		policy.IncludeMovies = false
 		policy.IncludeShows = false
 	}
-	if !policy.IncludeMovies {
-		enrichTrendingMovieReleaseVisibility(r.Context(), items, service)
-	}
+	// Always load release windows: release badges need them even when unreleased titles are shown.
+	enrichTrendingMovieReleaseVisibility(r.Context(), items, service)
 	items = filterTrendingItemsByUnreleasedVisibility(items, policy)
 	if hideWatched && userID != "" && h.HistoryService != nil {
 		items = filterWatchedItems(items, userID, h.HistoryService)
@@ -2300,9 +2298,8 @@ func (h *MetadataHandler) DiscoverByGenre(w http.ResponseWriter, r *http.Request
 		policy.IncludeMovies = false
 		policy.IncludeShows = false
 	}
-	if !policy.IncludeMovies {
-		enrichTrendingMovieReleaseVisibility(r.Context(), items, service)
-	}
+	// Always load release windows: release badges need them even when unreleased titles are shown.
+	enrichTrendingMovieReleaseVisibility(r.Context(), items, service)
 	beforeVisibility := len(items)
 	items = filterTrendingItemsByUnreleasedVisibility(items, policy)
 	total -= beforeVisibility - len(items)
@@ -2390,9 +2387,8 @@ func (h *MetadataHandler) DiscoverByDecade(w http.ResponseWriter, r *http.Reques
 		policy.IncludeMovies = false
 		policy.IncludeShows = false
 	}
-	if !policy.IncludeMovies {
-		enrichTrendingMovieReleaseVisibility(r.Context(), items, service)
-	}
+	// Always load release windows: release badges need them even when unreleased titles are shown.
+	enrichTrendingMovieReleaseVisibility(r.Context(), items, service)
 	beforeVisibility := len(items)
 	items = filterTrendingItemsByUnreleasedVisibility(items, policy)
 	total -= beforeVisibility - len(items)
