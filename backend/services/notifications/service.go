@@ -1302,10 +1302,47 @@ func sameHostRedirect(req *http.Request, via []*http.Request) error {
 	if len(via) >= 5 {
 		return errors.New("stopped after 5 redirects")
 	}
-	if !strings.EqualFold(req.URL.Host, via[0].URL.Host) {
+	if !sameRedirectHost(req.URL, via[0].URL) {
 		return errors.New("webhook redirected to a different host")
 	}
 	return nil
+}
+
+// sameRedirectHost compares hostnames case-insensitively with default ports
+// normalised, and treats discord.com and discordapp.com (and their
+// subdomains) as one host.
+func sameRedirectHost(a, b *url.URL) bool {
+	ha, hb := strings.ToLower(a.Hostname()), strings.ToLower(b.Hostname())
+	if ha != hb && !(isDiscordHost(ha) && isDiscordHost(hb)) {
+		return false
+	}
+	// Same port, or each on its scheme's default port (http->https upgrade).
+	return effectivePort(a) == effectivePort(b) || (defaultPort(a) && defaultPort(b))
+}
+
+func effectivePort(u *url.URL) string {
+	if p := u.Port(); p != "" {
+		return p
+	}
+	if strings.EqualFold(u.Scheme, "http") {
+		return "80"
+	}
+	return "443"
+}
+
+func defaultPort(u *url.URL) bool {
+	p := effectivePort(u)
+	return (strings.EqualFold(u.Scheme, "http") && p == "80") || (strings.EqualFold(u.Scheme, "https") && p == "443")
+}
+
+func isDiscordHost(host string) bool {
+	host = strings.ToLower(host)
+	for _, d := range []string{"discord.com", "discordapp.com"} {
+		if host == d || strings.HasSuffix(host, "."+d) {
+			return true
+		}
+	}
+	return false
 }
 
 func validateDestination(kind, rawURL string) error {
