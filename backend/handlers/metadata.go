@@ -3145,7 +3145,12 @@ func (h *MetadataHandler) writeSharedShelfResponse(
 	userID := strings.TrimSpace(r.URL.Query().Get("userId"))
 	items = h.filterTrendingByKids(r.Context(), userID, service, items)
 	if len(items) != originalCount {
-		total = len(items)
+		// Keep the shelf-wide total (used for paging) and only subtract what
+		// this page lost, instead of collapsing it to the page size.
+		total -= originalCount - len(items)
+		if total < len(items) {
+			total = len(items)
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(PopularOnServerResponse{Items: items, Total: total})
