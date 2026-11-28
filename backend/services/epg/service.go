@@ -25,6 +25,8 @@ import (
 	"novastream/internal/apiusage"
 	"novastream/internal/netproxy"
 	"novastream/models"
+
+	"golang.org/x/net/html/charset"
 )
 
 const (
@@ -551,6 +553,27 @@ func (s *Service) Refresh(ctx context.Context) error {
 		}
 	}
 
+	// A source that failed must not wipe its channels: carry over the previous schedule's
+	// entries for any channel the refresh returned nothing for.
+	// (When nothing fresh arrived at all, the zero-programs check below keeps the old schedule.)
+	if len(refreshErrors) > 0 && countSchedulePrograms(newSchedule) > 0 {
+		s.mu.RLock()
+		prev := s.schedule
+		s.mu.RUnlock()
+		if prev != nil {
+			for id, programs := range prev.Programs {
+				if len(newSchedule.Programs[id]) == 0 && len(programs) > 0 {
+					newSchedule.Programs[id] = append([]models.EPGProgram(nil), programs...)
+					if ch, ok := prev.Channels[id]; ok {
+						if _, exists := newSchedule.Channels[id]; !exists {
+							newSchedule.Channels[id] = ch
+						}
+					}
+				}
+			}
+		}
+	}
+
 	// Prune old programs based on retention
 	retentionDays := settings.Live.EPG.RetentionDays
 	if retentionDays <= 0 {
@@ -915,6 +938,11 @@ type xmltvRating struct {
 // parseXMLTV parses XMLTV data using streaming XML parser.
 func (s *Service) parseXMLTV(reader io.Reader, schedule *models.EPGSchedule) error {
 	decoder := xml.NewDecoder(reader)
+	// Guides in ISO-8859-1/windows-1252 are common; real-world feeds also carry bare '&'
+	// and HTML entities that must not abort the rest of the file.
+	decoder.CharsetReader = charset.NewReaderLabel
+	decoder.Strict = false
+	decoder.Entity = xml.HTMLEntity
 	started := time.Now()
 	channelCount := 0
 	programCount := 0
@@ -975,6 +1003,11 @@ func (s *Service) parseXMLTV(reader io.Reader, schedule *models.EPGSchedule) err
 					if s.xmltvInvalidTimes != nil {
 						s.xmltvInvalidTimes[strings.ToLower(prog.Channel)]++
 					}
+					continue
+				}
+
+				if !stop.After(start) {
+					invalidTimeCount++
 					continue
 				}
 
@@ -1055,7 +1088,7 @@ func getFirstLangValue(values []xmltvLang) string {
 }
 
 // parseXMLTVTime parses XMLTV time format (YYYYMMDDHHmmss +/-HHMM).
-var xmltvTimeRegex = regexp.MustCompile(`^(\d{14})(?:\s*([+-]\d{4}))?$`)
+var xmltvTimeRegex = regexp.MustCompile(`^(\d{12}(?:\d{2})?)(?:\s*([+-]\d{4}))?$`)
 
 // Precompiled for normalizeChannelID, which is called (indirectly, via
 // findProgramsByChannelMatch's linear scan) once per EPG channel on every unmatched
@@ -1091,7 +1124,11 @@ func parseXMLTVTime(s string) (time.Time, error) {
 		loc = time.FixedZone(tzStr, offset)
 	}
 
-	t, err := time.ParseInLocation("20060102150405", dateStr, loc)
+	layout := "20060102150405"
+	if len(dateStr) == 12 {
+		layout = "200601021504"
+	}
+	t, err := time.ParseInLocation(layout, dateStr, loc)
 	if err != nil {
 		return time.Time{}, err
 	}
