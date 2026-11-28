@@ -29,6 +29,8 @@
       "Cards for configured streaming services. Open a service to browse its configured movie and TV lists; the cards represent collections, rather than individual titles.",
     "live-favorites":
       "Live TV channels marked as favorites for this profile. Open a channel to watch it; available channels depend on the configured live TV sources.",
+    recordings:
+      "Live TV recordings for this profile that can be played, the one recording now first and then newest first. Open a recording to play it. Requires Live TV with DVR recording.",
     "popular-on-server":
       "Movies and shows watched by multiple profiles on this server, ranked by shared viewing activity. Only profiles that opt in to sharing activity contribute. Configure the time window and minimum number of profiles.",
     "recently-watched":

@@ -1028,10 +1028,11 @@ func DefaultHomeShelfConfigs() []ShelfConfig {
 		{ID: "trending-tv", Name: "Trending TV Shows", Enabled: true, Order: 10},
 		{ID: "streaming-services", Name: "Streaming Services", Enabled: true, Order: 11},
 		{ID: "live-favorites", Name: "Favorite Channels", Enabled: false, Order: 12},
-		{ID: "popular-on-server", Name: "Popular on This Server", Enabled: false, Order: 13, Limit: 20, ActivityWindowDays: 90, MinimumProfiles: 2},
-		{ID: "recently-watched", Name: "Recently Watched", Enabled: false, Order: 14, Limit: 20, ActivityWindowDays: 14, MaxItemsPerProfile: 3},
-		{ID: "permanent-prequeue", Name: "Permanent Prequeue", Enabled: false, Order: 15},
-		{ID: "set-aside", Name: "Set Aside", Enabled: false, Order: 16},
+		{ID: "recordings", Name: "Recordings", Enabled: false, Order: 13},
+		{ID: "popular-on-server", Name: "Popular on This Server", Enabled: false, Order: 14, Limit: 20, ActivityWindowDays: 90, MinimumProfiles: 2},
+		{ID: "recently-watched", Name: "Recently Watched", Enabled: false, Order: 15, Limit: 20, ActivityWindowDays: 14, MaxItemsPerProfile: 3},
+		{ID: "permanent-prequeue", Name: "Permanent Prequeue", Enabled: false, Order: 16},
+		{ID: "set-aside", Name: "Set Aside", Enabled: false, Order: 17},
 	}
 }
 
@@ -1287,6 +1288,34 @@ func EnsureDefaultHomeShelves(shelves []ShelfConfig) ([]ShelfConfig, bool) {
 		nextShelves = append(nextShelves, ShelfConfig{
 			ID:      "live-favorites",
 			Name:    "Favorite Channels",
+			Enabled: false,
+			Order:   insertOrder,
+		})
+		changed = true
+	}
+
+	if !hasShelf("recordings") {
+		insertOrder := -1
+		for _, shelf := range nextShelves {
+			if shelf.ID == "live-favorites" {
+				insertOrder = shelf.Order + 1
+				break
+			}
+			if shelf.Order > insertOrder {
+				insertOrder = shelf.Order + 1
+			}
+		}
+		if insertOrder < 0 {
+			insertOrder = 0
+		}
+		for i := range nextShelves {
+			if nextShelves[i].Order >= insertOrder {
+				nextShelves[i].Order++
+			}
+		}
+		nextShelves = append(nextShelves, ShelfConfig{
+			ID:      "recordings",
+			Name:    "Recordings",
 			Enabled: false,
 			Order:   insertOrder,
 		})
