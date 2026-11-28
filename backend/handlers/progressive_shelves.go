@@ -44,7 +44,7 @@ func progressiveShelfRequest(r *http.Request) bool {
 
 func (h *MetadataHandler) progressiveShelfFiltered(r *http.Request, userID string, hideUnreleased, hideWatched bool) bool {
 	policy := resolveUnreleasedVisibilityPolicy(h.CfgManager, h.UserSettings, h.ClientSettings, userID, requestClientID(r), unreleasedVisibilityLists)
-	_, _, kids := h.kidsRatingLimits(userID)
+	kids := h.kidsFilterActive(userID) && !isKidsAllowedListRequest(r.Context())
 	hidden, _ := r.Context().Value(progressiveShelfFiltersKey{}).(*progressiveShelfFilters)
 	mediaType := parseDisplayListQuery(r).MediaType
 	return hideUnreleased || hideWatched || kids || !policy.IncludeMovies || !policy.IncludeShows || (hidden != nil && hidden.hasHidden) || (mediaType != "" && mediaType != "all")
@@ -70,7 +70,7 @@ func (h *MetadataHandler) progressiveCuratedShelf(r *http.Request, service metad
 		policy.IncludeMovies = false
 		policy.IncludeShows = false
 	}
-	_, _, kids := h.kidsRatingLimits(userID)
+	kids := h.kidsFilterActive(userID) && !isKidsAllowedListRequest(r.Context())
 	filters, _ := r.Context().Value(progressiveShelfFiltersKey{}).(*progressiveShelfFilters)
 	if filters != nil {
 		filters.applied = true

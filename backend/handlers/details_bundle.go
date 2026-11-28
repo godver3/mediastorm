@@ -31,6 +31,45 @@ type DetailsBundleHandler struct {
 	cfgManager   *config.Manager
 	userSettings userSettingsProvider
 	watchlist    watchlistMembership
+	kidsGate     detailsKidsGate
+}
+
+// detailsKidsGate applies kids-profile limits to the details page: the
+// opened title must be allowed and similar titles are filtered.
+type detailsKidsGate interface {
+	KidsAllowsTitle(ctx context.Context, userID string, title models.Title) bool
+	FilterTitlesForKids(ctx context.Context, userID string, titles []models.Title) []models.Title
+}
+
+// SetKidsGate installs kids-profile enforcement for details responses.
+func (h *DetailsBundleHandler) SetKidsGate(gate detailsKidsGate) {
+	h.kidsGate = gate
+}
+
+// kidsBlocked reports (and writes a 403) when the resolved title is outside
+// a kids profile's limits.
+func (h *DetailsBundleHandler) kidsBlocked(w http.ResponseWriter, r *http.Request, userID, contentType, titleID, imdbID string, tvdbID, tmdbID int64, series *models.SeriesDetails, movie *models.Title) bool {
+	if h.kidsGate == nil {
+		return false
+	}
+	mediaType := "movie"
+	if contentType == "series" {
+		mediaType = "series"
+	}
+	title := kidsTitleFromQuery(mediaType, titleID, imdbID, tmdbID, tvdbID)
+	if series != nil {
+		title = series.Title
+	} else if movie != nil {
+		title = *movie
+	}
+	if title.MediaType == "" {
+		title.MediaType = mediaType
+	}
+	if h.kidsGate.KidsAllowsTitle(r.Context(), userID, title) {
+		return false
+	}
+	writeKidsTitleBlocked(w)
+	return true
 }
 
 // movieWatchState answers "is this movie marked watched?" across ID forms.
@@ -297,6 +336,9 @@ func (h *DetailsBundleHandler) GetDetailsShell(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	if h.kidsBlocked(w, r, userID, contentType, titleID, imdbID, tvdbID, tmdbID, resp.SeriesDetails, resp.MovieDetails) {
+		return
+	}
 	log.Printf("[details-shell timing] TOTAL: %dms (type=%s, titleId=%s)", time.Since(shellStart).Milliseconds(), contentType, titleID)
 	writeCompressedJSON(w, r, resp, "details-shell")
 }
@@ -547,6 +589,13 @@ func (h *DetailsBundleHandler) GetDetailsBundle(w http.ResponseWriter, r *http.R
 		}
 	}
 	log.Printf("[details-bundle timing] TOTAL: %dms (type=%s, titleId=%s)", time.Since(bundleStart).Milliseconds(), contentType, titleID)
+
+	if h.kidsBlocked(w, r, userID, contentType, titleID, imdbID, tvdbID, tmdbID, resp.SeriesDetails, resp.MovieDetails) {
+		return
+	}
+	if h.kidsGate != nil {
+		resp.Similar = h.kidsGate.FilterTitlesForKids(r.Context(), userID, resp.Similar)
+	}
 
 	// Ensure nil slices become empty arrays in JSON
 	if resp.Similar == nil {

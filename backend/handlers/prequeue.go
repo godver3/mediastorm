@@ -97,9 +97,10 @@ type PrequeueHandler struct {
 	clientSettingsSvc    ClientSettingsProvider
 	configManager        *config.Manager
 	metadataSvc          SeriesDetailsProvider // For episode counting
-	movieMetadataSvc     MovieDetailsProvider  // For movie anime detection
-	subtitleExtractor    SubtitlePreExtractor  // For pre-extracting subtitles
-	prewarmSvc           PrewarmService        // For checking pre-warmed entries
+	kidsTitleGate        func(context.Context, string, models.Title) bool
+	movieMetadataSvc     MovieDetailsProvider // For movie anime detection
+	subtitleExtractor    SubtitlePreExtractor // For pre-extracting subtitles
+	prewarmSvc           PrewarmService       // For checking pre-warmed entries
 	latencyTracker       *PlaybackLatencyTracker
 	failures             *streamFailureRegistry
 	badStreamsSvc        *badstreams.Service
@@ -1067,6 +1068,12 @@ func (h *PrequeueHandler) SetUsersService(svc prequeueOwnershipService) {
 	h.users = svc
 }
 
+// SetKidsTitleGate installs the kids-profile title check: a prequeue for a
+// title outside a kids profile's limits is refused.
+func (h *PrequeueHandler) SetKidsTitleGate(gate func(ctx context.Context, userID string, title models.Title) bool) {
+	h.kidsTitleGate = gate
+}
+
 // SetContentPreferencesService sets the content preferences service for per-content language preferences
 func (h *PrequeueHandler) SetContentPreferencesService(svc *content_preferences.Service) {
 	h.contentPreferencesSvc = svc
@@ -1204,6 +1211,14 @@ func (h *PrequeueHandler) Prequeue(w http.ResponseWriter, r *http.Request) {
 	mediaType := strings.ToLower(strings.TrimSpace(req.MediaType))
 	if mediaType == "" {
 		mediaType = "movie"
+	}
+	if h.kidsTitleGate != nil {
+		title := kidsTitleFromQuery(kidsMediaType(mediaType), req.TitleID, req.ImdbID, parseKidsInt64(req.TmdbID), parseKidsInt64(req.TvdbID))
+		title.Name, title.Year = strings.TrimSpace(req.TitleName), req.Year
+		if !h.kidsTitleGate(r.Context(), req.UserID, title) {
+			writeKidsTitleBlocked(w)
+			return
+		}
 	}
 
 	titleName := strings.TrimSpace(req.TitleName)

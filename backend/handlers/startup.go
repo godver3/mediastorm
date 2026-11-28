@@ -1379,6 +1379,9 @@ func (h *StartupHandler) applyFilters(items []models.TrendingItem, userID string
 	// Apply kids rating filter
 	if userID != "" && h.usersProvider != nil {
 		if user, ok := h.usersProvider.Get(userID); ok && user.IsKidsProfile {
+			if isCuratedKidsUser(user) {
+				return []models.TrendingItem{}
+			}
 			if user.KidsMode == "rating" {
 				movieRating := user.KidsMaxMovieRating
 				tvRating := user.KidsMaxTVRating

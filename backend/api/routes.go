@@ -254,6 +254,7 @@ func Register(
 	protected := api.PathPrefix("").Subrouter()
 	protected.Use(AccountAuthMiddleware(sessionsSvc, accountsSvc))
 	if usersSvc != nil {
+		protected.Use(profileaccess.DefaultKidsProfile(usersSvc.ListForAccount))
 		protected.Use(profileaccess.Middleware(usersSvc.BelongsToAccount))
 		protected.Use(profileaccess.BlockKidsFromLiveTV(func(profileID string) bool {
 			profile, ok := usersSvc.Get(profileID)

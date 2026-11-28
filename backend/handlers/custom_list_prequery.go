@@ -78,7 +78,7 @@ func (h *MetadataHandler) customListSourceQuerySupported(service metadataService
 	if !query.SourceQueryable(sourceTitlesAreDisplayNames(service)) {
 		return false
 	}
-	if _, _, kids := h.kidsRatingLimits(userID); kids {
+	if h.kidsFilterActive(userID) {
 		return false
 	}
 	return true

@@ -281,6 +281,12 @@ func (h *MetadataHandler) kidsRatingLimits(userID string) (movieRating, tvRating
 // kids rating limit for the given profile. It is a no-op for non-kids profiles
 // or profiles not in rating mode.
 func (h *MetadataHandler) filterTrendingByKids(ctx context.Context, userID string, service metadataService, items []models.TrendingItem) []models.TrendingItem {
+	if user, ok := h.kidsProfile(userID); ok && isCuratedKidsUser(user) {
+		if isKidsAllowedListRequest(ctx) {
+			return items
+		}
+		return []models.TrendingItem{}
+	}
 	movieRating, tvRating, ok := h.kidsRatingLimits(userID)
 	if !ok {
 		return items
@@ -293,6 +299,9 @@ func (h *MetadataHandler) filterTrendingByKids(ctx context.Context, userID strin
 // filterTitlesByKids enriches certifications and filters titles by the kids
 // rating limit for the given profile. No-op for non-kids/rating profiles.
 func (h *MetadataHandler) filterTitlesByKids(ctx context.Context, userID string, service metadataService, titles []models.Title) []models.Title {
+	if user, ok := h.kidsProfile(userID); ok && isCuratedKidsUser(user) {
+		return []models.Title{}
+	}
 	movieRating, tvRating, ok := h.kidsRatingLimits(userID)
 	if !ok {
 		return titles
@@ -415,20 +424,8 @@ func (h *MetadataHandler) DiscoverNew(w http.ResponseWriter, r *http.Request) {
 		items = filterWatchedItems(items, userID, h.HistoryService)
 	}
 
-	// Apply kids rating filter if user is a kids profile
-	if userID != "" && h.UsersService != nil {
-		if user, ok := h.UsersService.Get(userID); ok && user.IsKidsProfile {
-			if user.KidsMode == "rating" {
-				movieRating := user.KidsMaxMovieRating
-				tvRating := user.KidsMaxTVRating
-				if movieRating == "" && tvRating == "" && user.KidsMaxRating != "" {
-					movieRating = user.KidsMaxRating
-					tvRating = user.KidsMaxRating
-				}
-				items = kids.FilterTrendingByRatings(items, movieRating, tvRating)
-			}
-		}
-	}
+	// Apply kids-profile limits (rating caps or curated-only).
+	items = h.filterTrendingByKids(r.Context(), userID, service, items)
 
 	// Enrich with pre-computed watch state if user context is available
 	if userID != "" && h.HistoryService != nil {
@@ -611,6 +608,16 @@ func (h *MetadataHandler) SeriesDetails(w http.ResponseWriter, r *http.Request) 
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
+	if details != nil {
+		title := details.Title
+		if title.MediaType == "" {
+			title.MediaType = "series"
+		}
+		if !h.KidsAllowsTitle(r.Context(), query.Get("userId"), title) {
+			writeKidsTitleBlocked(w)
+			return
+		}
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(details)
@@ -731,6 +738,16 @@ func (h *MetadataHandler) MovieDetails(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadGateway)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
+	}
+	if details != nil {
+		title := *details
+		if title.MediaType == "" {
+			title.MediaType = "movie"
+		}
+		if !h.KidsAllowsTitle(r.Context(), query.Get("userId"), title) {
+			writeKidsTitleBlocked(w)
+			return
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -1255,6 +1272,8 @@ func (h *MetadataHandler) CustomList(w http.ResponseWriter, r *http.Request) {
 	if !strings.HasSuffix(listURL, "/json") {
 		listURL = listURL + "/json"
 	}
+	// A curated kids profile sees its own allowed lists unfiltered.
+	r = h.withKidsAllowedList(r, userID, listURL)
 
 	policy := resolveUnreleasedVisibilityPolicy(h.CfgManager, h.UserSettings, h.ClientSettings, userID, requestClientID(r), unreleasedVisibilityLists)
 	visibilityFiltered := hideUnreleased || !policy.IncludeMovies || !policy.IncludeShows
@@ -2100,6 +2119,7 @@ func (h *MetadataHandler) CuratedList(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
+	items = h.filterTrendingByKids(r.Context(), userID, service, items)
 
 	// Enrich with watch state if user context is available
 	if userID != "" && h.HistoryService != nil {
