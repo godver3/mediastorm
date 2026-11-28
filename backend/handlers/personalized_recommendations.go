@@ -213,6 +213,10 @@ func (h *MetadataHandler) writePersonalizedRecommendations(
 	response.Items = append(make([]models.TrendingItem, 0, len(response.Items)), response.Items...)
 	response.Movies = append(make([]models.TrendingItem, 0, len(response.Movies)), response.Movies...)
 	response.Series = append(make([]models.TrendingItem, 0, len(response.Series)), response.Series...)
+	if user, ok := h.kidsProfile(userID); ok && isCuratedKidsUser(user) {
+		// Curated kids profiles see only their allowed lists.
+		response.Items, response.Movies, response.Series = []models.TrendingItem{}, []models.TrendingItem{}, []models.TrendingItem{}
+	}
 	deferArtwork := parseShelfLoadOptions(r).DeferArtwork
 	enrichPersonalizedArtwork(r.Context(), response.Items, service, deferArtwork)
 	enrichPersonalizedArtwork(r.Context(), response.Movies, service, true)

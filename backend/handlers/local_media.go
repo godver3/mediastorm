@@ -174,6 +174,11 @@ func (h *LocalMediaHandler) profileKidsRatingCaps(profileID string) (movieRating
 		return "", ""
 	}
 	user, ok := h.usersSvc.Get(profileID)
+	if ok && isCuratedKidsUser(user) {
+		// Curated (content_list) profiles may only see their allowed lists,
+		// which library items cannot be matched against here: hide them all.
+		return kidsBlockAllRating, kidsBlockAllRating
+	}
 	if !ok || !user.IsKidsProfile || user.KidsMode != "rating" {
 		return "", ""
 	}

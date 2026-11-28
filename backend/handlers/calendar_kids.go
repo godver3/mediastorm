@@ -32,6 +32,11 @@ func kidsRatingLimits(users kidsUserLookup, userID string) (movie, tv string, ok
 // limits. Watch-party playback can put mature series into a kids profile's
 // history; that must not surface them in Coming Up / Recently Aired.
 func filterKidsCalendarItems(users kidsUserLookup, userID string, items []models.CalendarItem) []models.CalendarItem {
+	if users != nil && len(items) > 0 {
+		if user, found := users.Get(userID); found && isCuratedKidsUser(user) {
+			return []models.CalendarItem{}
+		}
+	}
 	movie, tv, ok := kidsRatingLimits(users, userID)
 	if !ok || len(items) == 0 {
 		return items

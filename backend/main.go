@@ -849,6 +849,7 @@ func main() {
 	detailsBundleHandler.SetConfigManager(cfgManager)
 	detailsBundleHandler.SetUserSettingsProvider(userSettingsService)
 	detailsBundleHandler.SetWatchlistService(watchlistService)
+	detailsBundleHandler.SetKidsGate(metadataHandler)
 
 	// Calendar service provides upcoming content from watchlist, history, and MDBList
 	calendarService := calendar.New(metadataService, watchlistService, historyService, userSettingsService, userService)
@@ -880,6 +881,7 @@ func main() {
 	prequeueHandler = handlers.NewPrequeueHandler(indexerService, playbackService, historyService, nil, nil, *demoMode)
 	prequeueHandler.SetBadStreamsService(badStreamsService)
 	prequeueHandler.SetUsersService(userService)
+	prequeueHandler.SetKidsTitleGate(metadataHandler.KidsAllowsTitle)
 	playbackHandler.SetUsersService(userService)
 	if store != nil {
 		prequeueHandler.GetStore().SetDataStore(store)
