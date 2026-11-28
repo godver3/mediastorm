@@ -232,13 +232,17 @@ func (s *Service) validFallback(ctx context.Context, p *Preset, fallback string)
 	if next.App != p.App {
 		return "", fmt.Errorf("the fallback must be a %s preset like %q", p.App, p.DisplayName())
 	}
-	for hop, cur := 0, next; cur != nil && cur.Fallback != "" && cur.Fallback != SimpleFallback; hop++ {
+	// depth counts the fallback presets after p: next plus each one it chains to.
+	depth := 1
+	for cur := next; cur != nil && cur.Fallback != "" && cur.Fallback != SimpleFallback; {
 		if cur.Fallback == p.ID {
 			return "", fmt.Errorf("%q already falls back to %q", next.DisplayName(), p.DisplayName())
 		}
-		if hop >= MaxFallbacks {
-			break
+		depth++
+		if depth > MaxFallbacks {
+			return "", fmt.Errorf("a preset can have at most %d fallbacks in a row", MaxFallbacks)
 		}
+		var err error
 		if cur, err = s.Get(ctx, cur.Fallback); err != nil {
 			break
 		}
