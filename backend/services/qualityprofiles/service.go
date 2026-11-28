@@ -247,6 +247,33 @@ func (s *Service) validFallback(ctx context.Context, p *Preset, fallback string)
 			break
 		}
 	}
+	// Presets that already fall back to p gain the whole new chain too.
+	if all, err := s.store.ListPresets(ctx); err == nil {
+		byFallback := map[string][]string{}
+		for _, o := range all {
+			if o.ID != p.ID && o.Fallback != "" {
+				byFallback[o.Fallback] = append(byFallback[o.Fallback], o.ID)
+			}
+		}
+		seen := map[string]bool{p.ID: true}
+		level := []string{p.ID}
+		for dist := 1; len(level) > 0; dist++ {
+			var nextLevel []string
+			for _, id := range level {
+				for _, up := range byFallback[id] {
+					if seen[up] {
+						continue
+					}
+					seen[up] = true
+					if dist+depth > MaxFallbacks {
+						return "", fmt.Errorf("a preset can have at most %d fallbacks in a row", MaxFallbacks)
+					}
+					nextLevel = append(nextLevel, up)
+				}
+			}
+			level = nextLevel
+		}
+	}
 	return next.ID, nil
 }
 
@@ -670,7 +697,9 @@ func (s *Service) UpdateSettings(ctx context.Context, id string, in SettingsUpda
 			}
 			p.Audience = *in.Audience
 		}
-		if in.Fallback != nil {
+		// Re-saving the current fallback skips the depth check, so presets
+		// whose chains were allowed earlier can still be edited.
+		if in.Fallback != nil && strings.TrimSpace(*in.Fallback) != p.Fallback {
 			fallback, err := s.validFallback(ctx, p, *in.Fallback)
 			if err != nil {
 				return err
