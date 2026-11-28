@@ -100,3 +100,10 @@ func RateLimitHandlerFunc(rl *IPRateLimiter, next http.HandlerFunc) http.Handler
 		next(w, r)
 	}
 }
+
+// newLiveStartLimiter limits live tuning (/live/hls/start) per IP. Channel surfing starts a
+// session per channel, so it allows a burst of 30 refilling one a second; the VOD HLS start
+// limit (5 a minute) would refuse the sixth channel in a minute.
+func newLiveStartLimiter() *IPRateLimiter {
+	return NewIPRateLimiter(rate.Every(time.Second), 30)
+}

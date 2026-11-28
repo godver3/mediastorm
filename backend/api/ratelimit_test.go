@@ -165,3 +165,18 @@ func TestRateLimitHandlerFunc(t *testing.T) {
 		t.Fatalf("expected 429, got %d", rec.Code)
 	}
 }
+
+func TestLiveStartLimiter_AllowsChannelSurfing(t *testing.T) {
+	handler := RateLimitHandlerFunc(newLiveStartLimiter(), func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	for i := 0; i < 20; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/live/hls/start", nil)
+		req.RemoteAddr = "10.0.0.9:1234"
+		rec := httptest.NewRecorder()
+		handler(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("tune %d: status %d, want 200", i+1, rec.Code)
+		}
+	}
+}

@@ -201,6 +201,7 @@ func Register(
 	// Rate limiters for resource-intensive endpoints (spawn FFmpeg processes)
 	probeLimiter := NewIPRateLimiter(rate.Every(6*time.Second), 10)    // 10/min per IP
 	hlsStartLimiter := NewIPRateLimiter(rate.Every(12*time.Second), 5) // 5/min per IP
+	liveStartLimiter := newLiveStartLimiter()
 	watchRoomInviteLimiter := NewIPRateLimiter(rate.Every(6*time.Second), 10)
 
 	// Auth routes (no authentication required)
@@ -528,7 +529,7 @@ func Register(
 	protected.HandleFunc("/library/items/{itemID}/playback", localMediaHandler.GetPlayback).Methods(http.MethodGet)
 	protected.HandleFunc("/library/items/{itemID}/playback", handleOptions).Methods(http.MethodOptions)
 	protected.HandleFunc("/library/items/{itemID}/artwork/{kind}", localMediaHandler.GetArtwork).Methods(http.MethodGet)
-	protected.HandleFunc("/live/hls/start", RateLimitHandlerFunc(hlsStartLimiter, videoHandler.StartLiveHLSSession)).Methods(http.MethodGet, http.MethodOptions)
+	protected.HandleFunc("/live/hls/start", RateLimitHandlerFunc(liveStartLimiter, videoHandler.StartLiveHLSSession)).Methods(http.MethodGet, http.MethodOptions)
 	protected.HandleFunc("/video/live-direct/{ticket}/stream.ts", videoHandler.ServeLiveDirect).Methods(http.MethodGet, http.MethodHead)
 	protected.HandleFunc("/live/usage", videoHandler.GetLiveUsage).Methods(http.MethodGet)
 	protected.HandleFunc("/live/usage", handleOptions).Methods(http.MethodOptions)
