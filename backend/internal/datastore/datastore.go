@@ -202,6 +202,7 @@ func (t *Tx) Recordings() RecordingRepository        { return &pgRecordingRepo{p
 func (t *Tx) RecordingRules() RecordingRuleRepository {
 	return &pgRecordingRepo{pool: t.tx}
 }
+func (t *Tx) SportsLinks() SportsLinksRepository { return &pgSportsLinksRepo{pool: t.tx} }
 func (t *Tx) Notifications() NotificationRepository {
 	return &pgNotificationRepo{pool: t.tx}
 }

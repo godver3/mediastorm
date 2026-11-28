@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"sort"
+	"strings"
 	"sync"
+	"time"
 )
 
 // Store persists presets and downloaded snapshot archives.
@@ -22,6 +24,17 @@ type Store interface {
 	GetTitlePreset(ctx context.Context, userID, clientID, contentID string) (string, error)
 	// SetTitlePreset remembers it; "" forgets it.
 	SetTitlePreset(ctx context.Context, userID, clientID, contentID, presetID string) error
+	// ListTitlePresets returns every remembered title preset (for backups).
+	ListTitlePresets(ctx context.Context) ([]TitlePresetRecord, error)
+}
+
+// TitlePresetRecord is one remembered per-title, per-device preset pick.
+type TitlePresetRecord struct {
+	UserID    string    `json:"userId"`
+	ClientID  string    `json:"clientId"`
+	ContentID string    `json:"contentId"`
+	PresetID  string    `json:"presetId"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 // MemoryStore is an in-process Store for tests; mediastorm itself needs
@@ -124,4 +137,29 @@ func (m *MemoryStore) SetTitlePreset(_ context.Context, userID, clientID, conten
 		m.titles[key] = presetID
 	}
 	return nil
+}
+
+// ListTitlePresets implements Store.
+func (m *MemoryStore) ListTitlePresets(_ context.Context) ([]TitlePresetRecord, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]TitlePresetRecord, 0, len(m.titles))
+	for key, presetID := range m.titles {
+		parts := strings.SplitN(key, "|", 3)
+		if len(parts) != 3 {
+			continue
+		}
+		out = append(out, TitlePresetRecord{UserID: parts[0], ClientID: parts[1], ContentID: parts[2], PresetID: presetID})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		if a.UserID != b.UserID {
+			return a.UserID < b.UserID
+		}
+		if a.ClientID != b.ClientID {
+			return a.ClientID < b.ClientID
+		}
+		return a.ContentID < b.ContentID
+	})
+	return out, nil
 }

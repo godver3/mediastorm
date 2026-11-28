@@ -127,3 +127,21 @@ func (r *pgQualityPresetRepo) SetTitlePreset(ctx context.Context, userID, client
 	}
 	return nil
 }
+
+func (r *pgQualityPresetRepo) ListTitlePresets(ctx context.Context) ([]qualityprofiles.TitlePresetRecord, error) {
+	rows, err := r.pool.Query(ctx, `SELECT user_id, client_id, content_id, preset_id, updated_at
+		FROM title_quality_presets ORDER BY user_id, client_id, content_id`)
+	if err != nil {
+		return nil, fmt.Errorf("list title quality presets: %w", err)
+	}
+	defer rows.Close()
+	out := []qualityprofiles.TitlePresetRecord{}
+	for rows.Next() {
+		var rec qualityprofiles.TitlePresetRecord
+		if err := rows.Scan(&rec.UserID, &rec.ClientID, &rec.ContentID, &rec.PresetID, &rec.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan title quality preset: %w", err)
+		}
+		out = append(out, rec)
+	}
+	return out, rows.Err()
+}
