@@ -185,10 +185,22 @@ func EnsureServerID(cfgManager *config.Manager, cacheDir string) (config.Jellyfi
 		}
 	}
 	if settings.JellyfinBridge.ServerID != id {
-		settings.JellyfinBridge.ServerID = id
-		if err := cfgManager.Save(settings); err != nil {
+		bridge := settings.JellyfinBridge
+		bridge.ServerID = id
+		if err := cfgManager.Update(func(cur *config.Settings) error {
+			bridge = cur.JellyfinBridge
+			if bridge.ServerID == id {
+				return config.ErrNoChange
+			}
+			cur.JellyfinBridge.ServerID = id
+			bridge = cur.JellyfinBridge
+			return nil
+		}); err != nil {
 			log.Printf("[jellyfin-bridge] could not mirror server id into settings: %v", err)
+			bridge = settings.JellyfinBridge
+			bridge.ServerID = id
 		}
+		return bridge, nil
 	}
 	return settings.JellyfinBridge, nil
 }

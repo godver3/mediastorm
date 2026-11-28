@@ -382,8 +382,10 @@ func (h *SettingsHandler) UploadBrandingImage(w http.ResponseWriter, r *http.Req
 	}
 
 	imageURL := fmt.Sprintf("/branding/images/%s?v=%d", slot.FileName, time.Now().Unix())
-	slot.Set(&settings, imageURL)
-	if err := h.Manager.Save(settings); err != nil {
+	if err := h.Manager.Update(func(cur *config.Settings) error {
+		slot.Set(cur, imageURL)
+		return nil
+	}); err != nil {
 		_ = os.Remove(localPath)
 		jsonError(w, "Failed to save settings: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -415,11 +417,17 @@ func (h *SettingsHandler) DeleteBrandingImage(w http.ResponseWriter, r *http.Req
 		_ = os.Remove(filepath.Join(brandingDir, slot.FileName+ext))
 	}
 	if strings.HasPrefix(slot.Get(settings), "/branding/images/") {
-		slot.Set(&settings, "")
-		if err := h.Manager.Save(settings); err != nil {
+		if err := h.Manager.Update(func(cur *config.Settings) error {
+			if !strings.HasPrefix(slot.Get(*cur), "/branding/images/") {
+				return config.ErrNoChange
+			}
+			slot.Set(cur, "")
+			return nil
+		}); err != nil {
 			jsonError(w, "Failed to save settings: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
+		slot.Set(&settings, "")
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -965,10 +973,12 @@ func (h *SettingsHandler) PutSettings(w http.ResponseWriter, r *http.Request) {
 
 	// Older clients omit sports update controls. Preserve the saved selection so
 	// normalization cannot re-enable background work during an unrelated save.
-	if s.Sports.Enabled == nil {
+	keepSportsEnabled := s.Sports.Enabled == nil
+	keepSportsLeagues := s.Sports.EnabledLeagues == nil
+	if keepSportsEnabled {
 		s.Sports.Enabled = oldSettings.Sports.Enabled
 	}
-	if s.Sports.EnabledLeagues == nil {
+	if keepSportsLeagues {
 		s.Sports.EnabledLeagues = oldSettings.Sports.EnabledLeagues
 	}
 
@@ -1026,7 +1036,22 @@ func (h *SettingsHandler) PutSettings(w http.ResponseWriter, r *http.Request) {
 	h.EnsureEPGTaskForGuide(&s, "settings PUT")
 	h.ensurePlaylistTaskIfConfigured(&s)
 
-	if err := h.Manager.Save(s); err != nil {
+	// The posted settings replace what is stored, but under the save lock and
+	// with the sections this page keeps taken from the current file, so a
+	// concurrent writer's changes to them (bridge, presets, sync task) survive.
+	if err := h.Manager.Update(func(cur *config.Settings) error {
+		if keepSportsEnabled {
+			s.Sports.Enabled = cur.Sports.Enabled
+		}
+		if keepSportsLeagues {
+			s.Sports.EnabledLeagues = cur.Sports.EnabledLeagues
+		}
+		s.JellyfinBridge = cur.JellyfinBridge
+		s.QualityPresets = cur.QualityPresets
+		keepQualityPresetSyncTask(&s, cur)
+		*cur = s
+		return nil
+	}); err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})

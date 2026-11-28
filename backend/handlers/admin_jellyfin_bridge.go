@@ -140,14 +140,11 @@ func (a *JellyfinBridgeAdmin) Put(w http.ResponseWriter, r *http.Request) {
 	}
 	in.TrustedProxies = proxies
 
-	s, err := a.cfg.Load()
-	if err != nil {
-		writeBridgeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	in.ServerID = s.JellyfinBridge.ServerID // the clients' identity of this server
-	s.JellyfinBridge = in
-	if err := a.cfg.Save(s); err != nil {
+	if err := a.cfg.Update(func(s *config.Settings) error {
+		in.ServerID = s.JellyfinBridge.ServerID // the clients' identity of this server
+		s.JellyfinBridge = in
+		return nil
+	}); err != nil {
 		writeBridgeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

@@ -3466,9 +3466,17 @@ func (m *Manager) Save(s Settings) error {
 	return m.saveLocked(s)
 }
 
+// ErrNoChange can be returned from an Update callback to skip the save
+// without reporting an error (the callback found nothing to change).
+var ErrNoChange = errors.New("config: no change")
+
 // Update loads the current settings, applies fn and saves the result while
 // holding the save lock, so concurrent read-modify-write callers cannot lose
-// each other's changes. If fn returns an error nothing is written.
+// each other's changes. If fn returns an error nothing is written; ErrNoChange
+// skips the write and Update returns nil.
+//
+// fn must not call back into the Manager (Load, Save or Update): the save lock
+// is held and Save/Update would deadlock.
 func (m *Manager) Update(fn func(*Settings) error) error {
 	m.saveMu.Lock()
 	defer m.saveMu.Unlock()
@@ -3486,6 +3494,9 @@ func (m *Manager) Update(fn func(*Settings) error) error {
 		return err
 	}
 	if err := fn(&s); err != nil {
+		if errors.Is(err, ErrNoChange) {
+			return nil
+		}
 		return err
 	}
 	return m.saveLocked(s)

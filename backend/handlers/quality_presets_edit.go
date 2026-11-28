@@ -8,6 +8,7 @@ import (
 
 	"github.com/gorilla/mux"
 
+	"novastream/config"
 	"novastream/internal/arr"
 	"novastream/services/qualityprofiles"
 )
@@ -20,7 +21,7 @@ func (h *QualityPresetsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.Config != nil {
-		if s, err := h.Config.Load(); err == nil {
+		_ = h.Config.Update(func(s *config.Settings) error {
 			changed := false
 			if s.QualityPresets.MoviePreset == id {
 				s.QualityPresets.MoviePreset, changed = "", true
@@ -52,10 +53,11 @@ func (h *QualityPresetsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 				hiddenKept = append(hiddenKept, hidden)
 			}
 			s.QualityPresets.HiddenByDefault = hiddenKept
-			if changed {
-				_ = h.Config.Save(s)
+			if !changed {
+				return config.ErrNoChange
 			}
-		}
+			return nil
+		})
 	}
 	h.clearCaches()
 	w.WriteHeader(http.StatusNoContent)

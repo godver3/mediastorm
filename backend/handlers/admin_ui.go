@@ -2350,13 +2350,16 @@ func (h *AdminUIHandler) GetOnboardingStatus(w http.ResponseWriter, r *http.Requ
 }
 
 func (h *AdminUIHandler) updateOnboardingState(update func(*config.Settings)) error {
-	mgr := config.NewManager(h.settingsPath)
-	settings, err := mgr.Load()
-	if err != nil {
-		return err
+	// Use the shared manager when it owns this file so the write is
+	// serialised with every other settings writer.
+	mgr := h.configManager
+	if mgr == nil || mgr.ConfigPath() != h.settingsPath {
+		mgr = config.NewManager(h.settingsPath)
 	}
-	update(&settings)
-	return mgr.Save(settings)
+	return mgr.Update(func(settings *config.Settings) error {
+		update(settings)
+		return nil
+	})
 }
 
 // DismissAdminWalkthrough marks the post-onboarding admin tour as shown for this instance.
@@ -5293,14 +5296,14 @@ func (h *AdminUIHandler) SaveSearchTimeout(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	settings, err := h.configManager.Load()
-	if err != nil {
+	if !updateSettingsOr(h.configManager, func(settings *config.Settings) error {
+		settings.Streaming.IndexerTimeoutSec = req.TimeoutSec
+		return nil
+	}, func(err error) {
 		writeJSONError(w, "Failed to load settings", http.StatusInternalServerError)
-		return
-	}
-	settings.Streaming.IndexerTimeoutSec = req.TimeoutSec
-	if err := h.configManager.Save(settings); err != nil {
+	}, func(err error) {
 		writeJSONError(w, "Failed to save settings", http.StatusInternalServerError)
+	}) {
 		return
 	}
 	if h.debridSearchService != nil {
@@ -9790,12 +9793,6 @@ func (h *AdminUIHandler) CreateMDBListAccount(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	settings, err := h.configManager.Load()
-	if err != nil {
-		http.Error(w, "Failed to load settings", http.StatusInternalServerError)
-		return
-	}
-
 	account := config.MDBListAccount{
 		ID:     uuid.New().String(),
 		Name:   req.Name,
@@ -9809,10 +9806,15 @@ func (h *AdminUIHandler) CreateMDBListAccount(w http.ResponseWriter, r *http.Req
 		account.Name = "MDBList Account"
 	}
 
-	settings.MDBList.Accounts = append(settings.MDBList.Accounts, account)
+	if !updateSettingsOr(h.configManager, func(settings *config.Settings) error {
+		settings.MDBList.Accounts = append(settings.MDBList.Accounts, account)
 
-	if err := h.configManager.Save(settings); err != nil {
+		return nil
+	}, func(err error) {
+		http.Error(w, "Failed to load settings", http.StatusInternalServerError)
+	}, func(err error) {
 		http.Error(w, "Failed to save settings", http.StatusInternalServerError)
+	}) {
 		return
 	}
 
@@ -9830,24 +9832,24 @@ func (h *AdminUIHandler) DeleteMDBListAccount(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	settings, err := h.configManager.Load()
-	if err != nil {
+	if !updateSettingsOr(h.configManager, func(settings *config.Settings) error {
+
+		account := settings.MDBList.GetAccountByID(accountID)
+		if account == nil || !h.canAccessOwnedIntegration(r, account.OwnerAccountID, h.usersService.GetUsersByMdblistAccountID(accountID)) {
+			http.Error(w, "Account not found", http.StatusNotFound)
+			return errSettingsUpdateAborted
+		}
+		settings.MDBList.RemoveAccount(accountID)
+		for _, user := range h.usersService.GetUsersByMdblistAccountID(accountID) {
+			_, _ = h.usersService.ClearMdblistAccountID(user.ID)
+		}
+
+		return nil
+	}, func(err error) {
 		http.Error(w, "Failed to load settings", http.StatusInternalServerError)
-		return
-	}
-
-	account := settings.MDBList.GetAccountByID(accountID)
-	if account == nil || !h.canAccessOwnedIntegration(r, account.OwnerAccountID, h.usersService.GetUsersByMdblistAccountID(accountID)) {
-		http.Error(w, "Account not found", http.StatusNotFound)
-		return
-	}
-	settings.MDBList.RemoveAccount(accountID)
-	for _, user := range h.usersService.GetUsersByMdblistAccountID(accountID) {
-		_, _ = h.usersService.ClearMdblistAccountID(user.ID)
-	}
-
-	if err := h.configManager.Save(settings); err != nil {
+	}, func(err error) {
 		http.Error(w, "Failed to save settings", http.StatusInternalServerError)
+	}) {
 		return
 	}
 
@@ -9873,27 +9875,28 @@ func (h *AdminUIHandler) UpdateMDBListAccount(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	settings, err := h.configManager.Load()
-	if err != nil {
+	var account *config.MDBListAccount
+	if !updateSettingsOr(h.configManager, func(settings *config.Settings) error {
+
+		account = settings.MDBList.GetAccountByID(accountID)
+		if account == nil || !h.canAccessOwnedIntegration(r, account.OwnerAccountID, h.usersService.GetUsersByMdblistAccountID(accountID)) {
+			http.Error(w, "Account not found", http.StatusNotFound)
+			return errSettingsUpdateAborted
+		}
+
+		if req.Name != nil {
+			account.Name = *req.Name
+		}
+		if req.APIKey != nil {
+			account.APIKey = *req.APIKey
+		}
+
+		return nil
+	}, func(err error) {
 		http.Error(w, "Failed to load settings", http.StatusInternalServerError)
-		return
-	}
-
-	account := settings.MDBList.GetAccountByID(accountID)
-	if account == nil || !h.canAccessOwnedIntegration(r, account.OwnerAccountID, h.usersService.GetUsersByMdblistAccountID(accountID)) {
-		http.Error(w, "Account not found", http.StatusNotFound)
-		return
-	}
-
-	if req.Name != nil {
-		account.Name = *req.Name
-	}
-	if req.APIKey != nil {
-		account.APIKey = *req.APIKey
-	}
-
-	if err := h.configManager.Save(settings); err != nil {
+	}, func(err error) {
 		http.Error(w, "Failed to save settings", http.StatusInternalServerError)
+	}) {
 		return
 	}
 
@@ -9961,12 +9964,6 @@ func (h *AdminUIHandler) CreateSimklAccount(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	settings, err := h.configManager.Load()
-	if err != nil {
-		http.Error(w, "Failed to load settings", http.StatusInternalServerError)
-		return
-	}
-
 	account := config.SimklAccount{
 		ID:           uuid.New().String(),
 		Name:         req.Name,
@@ -9982,9 +9979,14 @@ func (h *AdminUIHandler) CreateSimklAccount(w http.ResponseWriter, r *http.Reque
 		account.Name = "Simkl Account"
 	}
 
-	settings.Simkl.Accounts = append(settings.Simkl.Accounts, account)
-	if err := h.configManager.Save(settings); err != nil {
+	if !updateSettingsOr(h.configManager, func(settings *config.Settings) error {
+		settings.Simkl.Accounts = append(settings.Simkl.Accounts, account)
+		return nil
+	}, func(err error) {
+		http.Error(w, "Failed to load settings", http.StatusInternalServerError)
+	}, func(err error) {
 		http.Error(w, "Failed to save settings", http.StatusInternalServerError)
+	}) {
 		return
 	}
 
@@ -10001,22 +10003,22 @@ func (h *AdminUIHandler) DeleteSimklAccount(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	settings, err := h.configManager.Load()
-	if err != nil {
+	if !updateSettingsOr(h.configManager, func(settings *config.Settings) error {
+		account := settings.Simkl.GetAccountByID(accountID)
+		if account == nil || !h.canAccessOwnedIntegration(r, account.OwnerAccountID, h.usersService.GetUsersBySimklAccountID(accountID)) {
+			http.Error(w, "Account not found", http.StatusNotFound)
+			return errSettingsUpdateAborted
+		}
+		settings.Simkl.RemoveAccount(accountID)
+		for _, user := range h.usersService.GetUsersBySimklAccountID(accountID) {
+			_, _ = h.usersService.ClearSimklAccountID(user.ID)
+		}
+		return nil
+	}, func(err error) {
 		http.Error(w, "Failed to load settings", http.StatusInternalServerError)
-		return
-	}
-	account := settings.Simkl.GetAccountByID(accountID)
-	if account == nil || !h.canAccessOwnedIntegration(r, account.OwnerAccountID, h.usersService.GetUsersBySimklAccountID(accountID)) {
-		http.Error(w, "Account not found", http.StatusNotFound)
-		return
-	}
-	settings.Simkl.RemoveAccount(accountID)
-	for _, user := range h.usersService.GetUsersBySimklAccountID(accountID) {
-		_, _ = h.usersService.ClearSimklAccountID(user.ID)
-	}
-	if err := h.configManager.Save(settings); err != nil {
+	}, func(err error) {
 		http.Error(w, "Failed to save settings", http.StatusInternalServerError)
+	}) {
 		return
 	}
 
@@ -10044,33 +10046,34 @@ func (h *AdminUIHandler) UpdateSimklAccount(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	settings, err := h.configManager.Load()
-	if err != nil {
+	var account *config.SimklAccount
+	if !updateSettingsOr(h.configManager, func(settings *config.Settings) error {
+		account = settings.Simkl.GetAccountByID(accountID)
+		if account == nil || !h.canAccessOwnedIntegration(r, account.OwnerAccountID, h.usersService.GetUsersBySimklAccountID(accountID)) {
+			http.Error(w, "Account not found", http.StatusNotFound)
+			return errSettingsUpdateAborted
+		}
+		if req.Name != nil {
+			account.Name = *req.Name
+		}
+		if req.ClientID != nil {
+			account.ClientID = *req.ClientID
+		}
+		if req.ClientSecret != nil {
+			account.ClientSecret = *req.ClientSecret
+		}
+		if req.AccessToken != nil {
+			account.AccessToken = *req.AccessToken
+		}
+		if req.Username != nil {
+			account.Username = *req.Username
+		}
+		return nil
+	}, func(err error) {
 		http.Error(w, "Failed to load settings", http.StatusInternalServerError)
-		return
-	}
-	account := settings.Simkl.GetAccountByID(accountID)
-	if account == nil || !h.canAccessOwnedIntegration(r, account.OwnerAccountID, h.usersService.GetUsersBySimklAccountID(accountID)) {
-		http.Error(w, "Account not found", http.StatusNotFound)
-		return
-	}
-	if req.Name != nil {
-		account.Name = *req.Name
-	}
-	if req.ClientID != nil {
-		account.ClientID = *req.ClientID
-	}
-	if req.ClientSecret != nil {
-		account.ClientSecret = *req.ClientSecret
-	}
-	if req.AccessToken != nil {
-		account.AccessToken = *req.AccessToken
-	}
-	if req.Username != nil {
-		account.Username = *req.Username
-	}
-	if err := h.configManager.Save(settings); err != nil {
+	}, func(err error) {
 		http.Error(w, "Failed to save settings", http.StatusInternalServerError)
+	}) {
 		return
 	}
 
@@ -10147,19 +10150,27 @@ func (h *AdminUIHandler) CheckSimklAuth(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	account.AccessToken = result.AccessToken
-	account.RefreshToken = result.RefreshToken
-	account.ExpiresAt = result.ExpiresAt
-	account.AuthVersion = ""
-	if result.Version == simkl.AuthVersionV2 {
-		account.AuthVersion = simkl.AuthVersionV2
-	}
-	if result.UserID != "" {
-		account.Username = result.UserID
-	}
-	settings.Simkl.UpdateAccount(*account)
-	if err := h.configManager.Save(settings); err != nil {
+	if !updateSettingsOr(h.configManager, func(settings *config.Settings) error {
+		if fresh := settings.Simkl.GetAccountByID(accountID); fresh != nil {
+			account = fresh
+		}
+		account.AccessToken = result.AccessToken
+		account.RefreshToken = result.RefreshToken
+		account.ExpiresAt = result.ExpiresAt
+		account.AuthVersion = ""
+		if result.Version == simkl.AuthVersionV2 {
+			account.AuthVersion = simkl.AuthVersionV2
+		}
+		if result.UserID != "" {
+			account.Username = result.UserID
+		}
+		settings.Simkl.UpdateAccount(*account)
+		return nil
+	}, func(err error) {
+		http.Error(w, "Failed to load settings", http.StatusInternalServerError)
+	}, func(err error) {
 		http.Error(w, "Failed to save settings", http.StatusInternalServerError)
+	}) {
 		return
 	}
 
@@ -10185,14 +10196,22 @@ func (h *AdminUIHandler) DisconnectSimklAccount(w http.ResponseWriter, r *http.R
 			log.Printf("[simkl] revoke on disconnect failed for %s: %v", account.ID, err)
 		}
 	}
-	account.AccessToken = ""
-	account.RefreshToken = ""
-	account.ExpiresAt = 0
-	account.AuthVersion = ""
-	account.Username = ""
-	settings.Simkl.UpdateAccount(*account)
-	if err := h.configManager.Save(settings); err != nil {
+	if !updateSettingsOr(h.configManager, func(settings *config.Settings) error {
+		if fresh := settings.Simkl.GetAccountByID(accountID); fresh != nil {
+			account = fresh
+		}
+		account.AccessToken = ""
+		account.RefreshToken = ""
+		account.ExpiresAt = 0
+		account.AuthVersion = ""
+		account.Username = ""
+		settings.Simkl.UpdateAccount(*account)
+		return nil
+	}, func(err error) {
+		http.Error(w, "Failed to load settings", http.StatusInternalServerError)
+	}, func(err error) {
 		http.Error(w, "Failed to save settings", http.StatusInternalServerError)
+	}) {
 		return
 	}
 
@@ -12401,14 +12420,13 @@ func (h *AdminUIHandler) PlexCheckPIN(w http.ResponseWriter, r *http.Request) {
 		userInfo, _ := h.plexClient.GetUserInfo(pin.AuthToken)
 
 		// Save auth token to settings for persistence
-		settings, err := h.configManager.Load()
-		if err == nil {
+		_ = h.configManager.Update(func(settings *config.Settings) error {
 			settings.Plex.AuthToken = pin.AuthToken
 			if userInfo != nil {
 				settings.Plex.Username = userInfo.Username
 			}
-			h.configManager.Save(settings)
-		}
+			return nil
+		})
 
 		response := map[string]interface{}{
 			"authenticated": true,
@@ -12448,10 +12466,18 @@ func (h *AdminUIHandler) PlexGetStatus(w http.ResponseWriter, r *http.Request) {
 	if settings.Plex.AuthToken != "" && h.plexClient != nil {
 		userInfo, err := h.plexClient.GetUserInfo(settings.Plex.AuthToken)
 		if err != nil {
-			// Token is invalid, clear it
+			// Token is invalid, clear it (unless it was replaced meanwhile)
+			invalid := settings.Plex.AuthToken
 			settings.Plex.AuthToken = ""
 			settings.Plex.Username = ""
-			h.configManager.Save(settings)
+			_ = h.configManager.Update(func(cur *config.Settings) error {
+				if cur.Plex.AuthToken != invalid {
+					return config.ErrNoChange
+				}
+				cur.Plex.AuthToken = ""
+				cur.Plex.Username = ""
+				return nil
+			})
 			response["connected"] = false
 			response["username"] = ""
 		} else if userInfo != nil {
@@ -12465,25 +12491,25 @@ func (h *AdminUIHandler) PlexGetStatus(w http.ResponseWriter, r *http.Request) {
 
 // PlexDisconnect removes the saved Plex auth token
 func (h *AdminUIHandler) PlexDisconnect(w http.ResponseWriter, r *http.Request) {
-	settings, err := h.configManager.Load()
-	if err != nil {
+	if !updateSettingsOr(h.configManager, func(settings *config.Settings) error {
+
+		settings.Plex.AuthToken = ""
+		settings.Plex.Username = ""
+
+		return nil
+	}, func(err error) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": "Failed to load settings: " + err.Error(),
 		})
-		return
-	}
-
-	settings.Plex.AuthToken = ""
-	settings.Plex.Username = ""
-
-	if err := h.configManager.Save(settings); err != nil {
+	}, func(err error) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": "Failed to save settings: " + err.Error(),
 		})
+	}) {
 		return
 	}
 
@@ -12826,11 +12852,12 @@ func (h *AdminUIHandler) ensureValidTraktToken() (string, error) {
 			}
 
 			// Update settings with new tokens
-			settings.Trakt.AccessToken = token.AccessToken
-			settings.Trakt.RefreshToken = token.RefreshToken
-			settings.Trakt.ExpiresAt = token.CreatedAt + int64(token.ExpiresIn)
-
-			if err := h.configManager.Save(settings); err != nil {
+			if err := h.configManager.Update(func(cur *config.Settings) error {
+				cur.Trakt.AccessToken = token.AccessToken
+				cur.Trakt.RefreshToken = token.RefreshToken
+				cur.Trakt.ExpiresAt = token.CreatedAt + int64(token.ExpiresIn)
+				return nil
+			}); err != nil {
 				return "", fmt.Errorf("failed to save refreshed token: %w", err)
 			}
 
@@ -12886,25 +12913,25 @@ func (h *AdminUIHandler) TraktSaveCredentials(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	settings, err := h.configManager.Load()
-	if err != nil {
+	if !updateSettingsOr(h.configManager, func(settings *config.Settings) error {
+
+		settings.Trakt.ClientID = req.ClientID
+		settings.Trakt.ClientSecret = req.ClientSecret
+
+		return nil
+	}, func(err error) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": "Failed to load settings: " + err.Error(),
 		})
-		return
-	}
-
-	settings.Trakt.ClientID = req.ClientID
-	settings.Trakt.ClientSecret = req.ClientSecret
-
-	if err := h.configManager.Save(settings); err != nil {
+	}, func(err error) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": "Failed to save settings: " + err.Error(),
 		})
+	}) {
 		return
 	}
 
@@ -13005,65 +13032,66 @@ func (h *AdminUIHandler) TraktCheckAuth(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Get user profile
+	profile, profileErr := h.traktClient.GetUserProfile(token.AccessToken)
+
 	// Token received, save to settings
-	settings, err := h.configManager.Load()
-	if err != nil {
+	var username string
+	if !updateSettingsOr(h.configManager, func(settings *config.Settings) error {
+		settings.Trakt.AccessToken = token.AccessToken
+		settings.Trakt.RefreshToken = token.RefreshToken
+		settings.Trakt.ExpiresAt = token.CreatedAt + int64(token.ExpiresIn)
+		if profileErr == nil && profile != nil {
+			settings.Trakt.Username = profile.Username
+		}
+		username = settings.Trakt.Username
+
+		return nil
+	}, func(err error) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": "Failed to load settings: " + err.Error(),
 		})
-		return
-	}
-
-	settings.Trakt.AccessToken = token.AccessToken
-	settings.Trakt.RefreshToken = token.RefreshToken
-	settings.Trakt.ExpiresAt = token.CreatedAt + int64(token.ExpiresIn)
-
-	// Get user profile
-	profile, err := h.traktClient.GetUserProfile(token.AccessToken)
-	if err == nil && profile != nil {
-		settings.Trakt.Username = profile.Username
-	}
-
-	if err := h.configManager.Save(settings); err != nil {
+	}, func(err error) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": "Failed to save token: " + err.Error(),
 		})
+	}) {
 		return
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"authenticated": true,
-		"username":      settings.Trakt.Username,
+		"username":      username,
 	})
 }
 
 // TraktDisconnect removes Trakt OAuth tokens from settings
 func (h *AdminUIHandler) TraktDisconnect(w http.ResponseWriter, r *http.Request) {
-	settings, err := h.configManager.Load()
-	if err != nil {
+	if !updateSettingsOr(h.configManager, func(settings *config.Settings) error {
+
+		settings.Trakt.AccessToken = ""
+		settings.Trakt.RefreshToken = ""
+		settings.Trakt.ExpiresAt = 0
+		settings.Trakt.Username = ""
+
+		return nil
+	}, func(err error) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": "Failed to load settings: " + err.Error(),
 		})
-		return
-	}
-
-	settings.Trakt.AccessToken = ""
-	settings.Trakt.RefreshToken = ""
-	settings.Trakt.ExpiresAt = 0
-	settings.Trakt.Username = ""
-
-	if err := h.configManager.Save(settings); err != nil {
+	}, func(err error) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": "Failed to save settings: " + err.Error(),
 		})
+	}) {
 		return
 	}
 
@@ -13088,24 +13116,24 @@ func (h *AdminUIHandler) TraktSetScrobbling(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	settings, err := h.configManager.Load()
-	if err != nil {
+	if !updateSettingsOr(h.configManager, func(settings *config.Settings) error {
+
+		settings.Trakt.ScrobblingEnabled = req.Enabled
+
+		return nil
+	}, func(err error) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": "Failed to load settings: " + err.Error(),
 		})
-		return
-	}
-
-	settings.Trakt.ScrobblingEnabled = req.Enabled
-
-	if err := h.configManager.Save(settings); err != nil {
+	}, func(err error) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": "Failed to save settings: " + err.Error(),
 		})
+	}) {
 		return
 	}
 

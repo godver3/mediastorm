@@ -132,16 +132,12 @@ func (h *JellyfinAccountsHandler) CreateAccount(w http.ResponseWriter, r *http.R
 		newAccount.OwnerAccountID = auth.GetAccountID(r)
 	}
 
-	settings, err := h.configManager.Load()
-	if err != nil {
-		jsonError(w, "Failed to load settings: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
+	if !updateSettings(w, h.configManager, "Failed to save settings: ", func(settings *config.Settings) error {
 
-	settings.Jellyfin.Accounts = append(settings.Jellyfin.Accounts, newAccount)
+		settings.Jellyfin.Accounts = append(settings.Jellyfin.Accounts, newAccount)
 
-	if err := h.configManager.Save(settings); err != nil {
-		jsonError(w, "Failed to save settings: "+err.Error(), http.StatusInternalServerError)
+		return nil
+	}) {
 		return
 	}
 
@@ -167,21 +163,17 @@ func (h *JellyfinAccountsHandler) DeleteAccount(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	settings, err := h.configManager.Load()
-	if err != nil {
-		jsonError(w, "Failed to load settings: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
+	if !updateSettings(w, h.configManager, "Failed to save settings: ", func(settings *config.Settings) error {
 
-	account := settings.Jellyfin.GetAccountByID(accountID)
-	if !canAccessJellyfinAccount(r, account) {
-		jsonError(w, "Account not found", http.StatusNotFound)
-		return
-	}
-	settings.Jellyfin.RemoveAccount(accountID)
+		account := settings.Jellyfin.GetAccountByID(accountID)
+		if !canAccessJellyfinAccount(r, account) {
+			jsonError(w, "Account not found", http.StatusNotFound)
+			return errSettingsUpdateAborted
+		}
+		settings.Jellyfin.RemoveAccount(accountID)
 
-	if err := h.configManager.Save(settings); err != nil {
-		jsonError(w, "Failed to save settings: "+err.Error(), http.StatusInternalServerError)
+		return nil
+	}) {
 		return
 	}
 

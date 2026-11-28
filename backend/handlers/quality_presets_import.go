@@ -25,13 +25,10 @@ func (h *QualityPresetsHandler) Sources(w http.ResponseWriter, r *http.Request) 
 		presetError(w, err)
 		return
 	}
-	settings, err := h.Config.Load()
-	if err != nil {
-		writeJSONError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	settings.QualityPresets.Sources = SourcesToConfig(in)
-	if err := h.Config.Save(settings); err != nil {
+	if err := h.Config.Update(func(settings *config.Settings) error {
+		settings.QualityPresets.Sources = SourcesToConfig(in)
+		return nil
+	}); err != nil {
 		writeJSONError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -151,11 +148,12 @@ func (h *QualityPresetsHandler) ensureSyncTask() {
 	if h.Config == nil {
 		return
 	}
-	s, err := h.Config.Load()
-	if err != nil || !EnsureQualityPresetSyncTask(&s) {
-		return
-	}
-	if err := h.Config.Save(s); err != nil {
+	if err := h.Config.Update(func(s *config.Settings) error {
+		if !EnsureQualityPresetSyncTask(s) {
+			return config.ErrNoChange
+		}
+		return nil
+	}); err != nil {
 		log.Printf("[quality-presets] failed to add the update check task: %v", err)
 	}
 }

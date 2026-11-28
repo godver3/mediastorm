@@ -70,11 +70,6 @@ func (h *AdminUIHandler) CreateScrobAccount(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "A valid Scrob URL and API key are required", http.StatusBadRequest)
 		return
 	}
-	settings, err := h.configManager.Load()
-	if err != nil {
-		http.Error(w, "Failed to load settings", http.StatusInternalServerError)
-		return
-	}
 	account := config.ScrobAccount{ID: uuid.New().String(), Name: strings.TrimSpace(req.Name), BaseURL: baseURL, APIKey: strings.TrimSpace(req.APIKey), Username: strings.TrimSpace(req.Username), Password: req.Password, TOTPSecret: strings.TrimSpace(req.TOTPSecret)}
 	if account.Name == "" {
 		account.Name = "Scrob Account"
@@ -82,9 +77,10 @@ func (h *AdminUIHandler) CreateScrobAccount(w http.ResponseWriter, r *http.Reque
 	if isAdmin, ownerID, _, _ := h.getPageRoleInfo(r); !isAdmin {
 		account.OwnerAccountID = ownerID
 	}
-	settings.Scrob.Accounts = append(settings.Scrob.Accounts, account)
-	if err := h.configManager.Save(settings); err != nil {
-		http.Error(w, "Failed to save settings", http.StatusInternalServerError)
+	if !updateSettingsPlain(w, h.configManager, "Failed to load settings", "Failed to save settings", func(settings *config.Settings) error {
+		settings.Scrob.Accounts = append(settings.Scrob.Accounts, account)
+		return nil
+	}) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -106,65 +102,59 @@ func (h *AdminUIHandler) UpdateScrobAccount(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
-	settings, err := h.configManager.Load()
-	if err != nil {
-		http.Error(w, "Failed to load settings", http.StatusInternalServerError)
-		return
-	}
-	account := settings.Scrob.GetAccountByID(accountID)
-	if account == nil || !h.canAccessOwnedIntegration(r, account.OwnerAccountID, h.usersService.GetUsersByScrobAccountID(accountID)) {
-		http.Error(w, "Account not found", http.StatusNotFound)
-		return
-	}
-	if req.Name != nil {
-		account.Name = strings.TrimSpace(*req.Name)
-	}
-	if req.BaseURL != nil {
-		value, ok := validateScrobBaseURL(*req.BaseURL)
-		if !ok {
-			http.Error(w, "Invalid Scrob URL", http.StatusBadRequest)
-			return
+	var updated config.ScrobAccount
+	if !updateSettingsPlain(w, h.configManager, "Failed to load settings", "Failed to save settings", func(settings *config.Settings) error {
+		account := settings.Scrob.GetAccountByID(accountID)
+		if account == nil || !h.canAccessOwnedIntegration(r, account.OwnerAccountID, h.usersService.GetUsersByScrobAccountID(accountID)) {
+			http.Error(w, "Account not found", http.StatusNotFound)
+			return errSettingsUpdateAborted
 		}
-		account.BaseURL = value
-	}
-	if req.APIKey != nil && *req.APIKey != "" {
-		account.APIKey = strings.TrimSpace(*req.APIKey)
-	}
-	if req.Username != nil {
-		account.Username = strings.TrimSpace(*req.Username)
-	}
-	if req.Password != nil && *req.Password != "" {
-		account.Password = *req.Password
-	}
-	if req.TOTPSecret != nil && *req.TOTPSecret != "" {
-		account.TOTPSecret = strings.TrimSpace(*req.TOTPSecret)
-	}
-	if err := h.configManager.Save(settings); err != nil {
-		http.Error(w, "Failed to save settings", http.StatusInternalServerError)
+		if req.Name != nil {
+			account.Name = strings.TrimSpace(*req.Name)
+		}
+		if req.BaseURL != nil {
+			value, ok := validateScrobBaseURL(*req.BaseURL)
+			if !ok {
+				http.Error(w, "Invalid Scrob URL", http.StatusBadRequest)
+				return errSettingsUpdateAborted
+			}
+			account.BaseURL = value
+		}
+		if req.APIKey != nil && *req.APIKey != "" {
+			account.APIKey = strings.TrimSpace(*req.APIKey)
+		}
+		if req.Username != nil {
+			account.Username = strings.TrimSpace(*req.Username)
+		}
+		if req.Password != nil && *req.Password != "" {
+			account.Password = *req.Password
+		}
+		if req.TOTPSecret != nil && *req.TOTPSecret != "" {
+			account.TOTPSecret = strings.TrimSpace(*req.TOTPSecret)
+		}
+		updated = *account
+		return nil
+	}) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(publicScrobAccount(*account))
+	_ = json.NewEncoder(w).Encode(publicScrobAccount(updated))
 }
 
 func (h *AdminUIHandler) DeleteScrobAccount(w http.ResponseWriter, r *http.Request) {
 	accountID := mux.Vars(r)["accountID"]
-	settings, err := h.configManager.Load()
-	if err != nil {
-		http.Error(w, "Failed to load settings", http.StatusInternalServerError)
-		return
-	}
-	account := settings.Scrob.GetAccountByID(accountID)
-	if account == nil || !h.canAccessOwnedIntegration(r, account.OwnerAccountID, h.usersService.GetUsersByScrobAccountID(accountID)) {
-		http.Error(w, "Account not found", http.StatusNotFound)
-		return
-	}
-	settings.Scrob.RemoveAccount(accountID)
-	for _, user := range h.usersService.GetUsersByScrobAccountID(accountID) {
-		_, _ = h.usersService.ClearScrobAccountID(user.ID)
-	}
-	if err := h.configManager.Save(settings); err != nil {
-		http.Error(w, "Failed to save settings", http.StatusInternalServerError)
+	if !updateSettingsPlain(w, h.configManager, "Failed to load settings", "Failed to save settings", func(settings *config.Settings) error {
+		account := settings.Scrob.GetAccountByID(accountID)
+		if account == nil || !h.canAccessOwnedIntegration(r, account.OwnerAccountID, h.usersService.GetUsersByScrobAccountID(accountID)) {
+			http.Error(w, "Account not found", http.StatusNotFound)
+			return errSettingsUpdateAborted
+		}
+		settings.Scrob.RemoveAccount(accountID)
+		for _, user := range h.usersService.GetUsersByScrobAccountID(accountID) {
+			_, _ = h.usersService.ClearScrobAccountID(user.ID)
+		}
+		return nil
+	}) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

@@ -660,24 +660,22 @@ func (s *Service) migrateLegacyDefaultTaskProfiles() error {
 		return nil
 	}
 
-	settings, err := s.configManager.Load()
-	if err != nil {
-		return err
-	}
-	changed := false
-	for i := range settings.ScheduledTasks.Tasks {
-		task := &settings.ScheduledTasks.Tasks[i]
-		if strings.TrimSpace(task.Config["profileId"]) != models.DefaultUserID {
-			continue
+	return s.configManager.Update(func(settings *config.Settings) error {
+		changed := false
+		for i := range settings.ScheduledTasks.Tasks {
+			task := &settings.ScheduledTasks.Tasks[i]
+			if strings.TrimSpace(task.Config["profileId"]) != models.DefaultUserID {
+				continue
+			}
+			task.Config["profileId"] = replacementID
+			changed = true
+			log.Printf("[scheduler] Migrated task %q profile id from %q to %q", task.Name, models.DefaultUserID, replacementID)
 		}
-		task.Config["profileId"] = replacementID
-		changed = true
-		log.Printf("[scheduler] Migrated task %q profile id from %q to %q", task.Name, models.DefaultUserID, replacementID)
-	}
-	if !changed {
+		if !changed {
+			return config.ErrNoChange
+		}
 		return nil
-	}
-	return s.configManager.Save(settings)
+	})
 }
 
 func (s *Service) resolveTaskProfileID(task config.ScheduledTask) (string, error) {
@@ -2219,15 +2217,14 @@ func (s *Service) executeBackup(task config.ScheduledTask) (SyncResult, error) {
 		retDaysStr := task.Config["retentionDays"]
 		retCountStr := task.Config["retentionCount"]
 		if retDaysStr != "" || retCountStr != "" {
-			settings, err := s.configManager.Load()
-			if err == nil {
-				days, _ := strconv.Atoi(retDaysStr)
-				count, _ := strconv.Atoi(retCountStr)
-				if days > 0 || count > 0 {
+			days, _ := strconv.Atoi(retDaysStr)
+			count, _ := strconv.Atoi(retCountStr)
+			if days > 0 || count > 0 {
+				_ = s.configManager.Update(func(settings *config.Settings) error {
 					settings.BackupRetention.RetentionDays = days
 					settings.BackupRetention.RetentionCount = count
-					s.configManager.Save(settings)
-				}
+					return nil
+				})
 			}
 		}
 	}

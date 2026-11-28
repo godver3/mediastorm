@@ -261,20 +261,23 @@ func (h *SportsHandler) PutSettings(w http.ResponseWriter, r *http.Request) {
 	if next.EnabledLeagues != nil {
 		next.EnabledLeagues = clean
 	}
-	settings, err := h.config.Load()
-	if err != nil {
-		http.Error(w, `{"error":"failed to load settings"}`, http.StatusInternalServerError)
-		return
-	}
-	if next.Enabled == nil {
-		next.Enabled = settings.Sports.Enabled
-	}
-	if next.EnabledLeagues == nil {
-		next.EnabledLeagues = settings.Sports.EnabledLeagues
-	}
-	next.Normalize()
-	settings.Sports = next
-	if err := h.config.Save(settings); err != nil {
+	loaded := false
+	if err := h.config.Update(func(settings *config.Settings) error {
+		loaded = true
+		if next.Enabled == nil {
+			next.Enabled = settings.Sports.Enabled
+		}
+		if next.EnabledLeagues == nil {
+			next.EnabledLeagues = settings.Sports.EnabledLeagues
+		}
+		next.Normalize()
+		settings.Sports = next
+		return nil
+	}); err != nil {
+		if !loaded {
+			http.Error(w, `{"error":"failed to load settings"}`, http.StatusInternalServerError)
+			return
+		}
 		http.Error(w, `{"error":"failed to save sports settings"}`, http.StatusInternalServerError)
 		return
 	}
