@@ -37,6 +37,22 @@ func localhostOnlyMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// directLoopbackOnlyMiddleware is localhostOnlyMiddleware plus a rejection of
+// requests that carry proxy-forwarding headers. A same-host reverse proxy makes
+// every request arrive from a loopback peer; legitimate local callers (the
+// built-in transcoder) connect directly and never set these headers.
+func directLoopbackOnlyMiddleware(next http.Handler) http.Handler {
+	return localhostOnlyMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for _, h := range []string{"X-Forwarded-For", "Forwarded", "X-Real-IP"} {
+			if r.Header.Get(h) != "" {
+				http.Error(w, "Debug endpoints only accessible from localhost", http.StatusForbidden)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	}))
+}
+
 // devOnlyMiddleware restricts access to a local TCP peer.
 func devOnlyMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -237,7 +253,7 @@ func Register(
 	registerWatchPartyGuestRoutes(api, watchPartyHandler)
 
 	if videoHandler != nil {
-		api.Handle("/video/internal-stream", localhostOnlyMiddleware(http.HandlerFunc(videoHandler.StreamVideo))).Methods(http.MethodGet, http.MethodHead, http.MethodOptions)
+		api.Handle("/video/internal-stream", directLoopbackOnlyMiddleware(http.HandlerFunc(videoHandler.StreamVideo))).Methods(http.MethodGet, http.MethodHead, http.MethodOptions)
 	}
 
 	// A credential-free LAN probe must be registered before the protected catch-all.
