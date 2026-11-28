@@ -6,7 +6,14 @@ import (
 	"strings"
 
 	"novastream/models"
+	"novastream/services/notifications"
 )
+
+// isAdminRequest reports whether the request's session belongs to a master account.
+func (h *AdminUIHandler) isAdminRequest(r *http.Request) bool {
+	session := adminSessionFromContext(r.Context())
+	return session != nil && session.IsMaster
+}
 
 type NotificationPageData struct {
 	AdminPageData
@@ -81,6 +88,10 @@ func (h *AdminUIHandler) SaveNotificationChannel(w http.ResponseWriter, r *http.
 	if ok, _ := h.requireProfileScope(w, r, channel.ProfileID); !ok {
 		return
 	}
+	if strings.EqualFold(strings.TrimSpace(channel.Type), models.NotificationChannelWebhook) && !h.isAdminRequest(r) {
+		http.Error(w, notifications.ErrGenericWebhookAdminOnly.Error(), http.StatusForbidden)
+		return
+	}
 	saved, err := h.notificationService.SaveChannel(r.Context(), channel)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -118,6 +129,20 @@ func (h *AdminUIHandler) TestNotificationChannel(w http.ResponseWriter, r *http.
 	profileID := strings.TrimSpace(r.URL.Query().Get("profileId"))
 	if ok, _ := h.requireProfileScope(w, r, profileID); !ok {
 		return
+	}
+	if !h.isAdminRequest(r) {
+		channels, err := h.notificationService.ListChannels(r.Context(), profileID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		testID := strings.TrimSpace(r.URL.Query().Get("id"))
+		for _, channel := range channels {
+			if channel.ID == testID && channel.Type == models.NotificationChannelWebhook {
+				http.Error(w, notifications.ErrGenericWebhookAdminOnly.Error(), http.StatusForbidden)
+				return
+			}
+		}
 	}
 	if err := h.notificationService.TestChannel(r.Context(), profileID, r.URL.Query().Get("id")); err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)

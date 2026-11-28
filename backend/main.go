@@ -860,7 +860,15 @@ func main() {
 		calendarService.LoadPersisted(calendarLoadCtx)
 		cancelCalendarLoad()
 	}
-	notificationService := notifications.New(store.Notifications(), notifications.WithProfiles(userService), notifications.WithClients(clientsService))
+	notificationService := notifications.New(store.Notifications(), notifications.WithProfiles(userService), notifications.WithClients(clientsService),
+		notifications.WithMasterCheck(func(profileID string) bool {
+			profile, ok := userService.Get(profileID)
+			if !ok {
+				return false
+			}
+			account, ok := accountsService.Get(profile.AccountID)
+			return ok && account.IsMaster
+		}))
 	defer notificationService.Close()
 	calendarService.SetReleaseObserver(notificationService)
 	historyService.SetWatchStateChangedHook(calendarService.Invalidate)
@@ -1513,22 +1521,22 @@ func main() {
 	r.HandleFunc("/admin/api/video/hls/{sessionID}/{segment}", adminUIHandler.RequireAuth(videoHandler.ServeHLSSegment)).Methods(http.MethodGet, http.MethodOptions)
 
 	// Provider test endpoints
-	r.HandleFunc("/admin/api/test/indexer", adminUIHandler.RequireAuth(apiusage.Track("connections.test.indexer", "Indexer test", "Provider Tests", adminUIHandler.TestIndexer))).Methods(http.MethodPost)
-	r.HandleFunc("/admin/api/test/scraper", adminUIHandler.RequireAuth(apiusage.Track("connections.test.scraper", "Scraper test", "Provider Tests", adminUIHandler.TestScraper))).Methods(http.MethodPost)
-	r.HandleFunc("/admin/api/test/usenet-provider", adminUIHandler.RequireAuth(apiusage.Track("connections.test.usenet_provider", "Usenet provider test", "Provider Tests", adminUIHandler.TestUsenetProvider))).Methods(http.MethodPost)
-	r.HandleFunc("/admin/api/test/usenet-engine", adminUIHandler.RequireAuth(apiusage.Track("connections.test.usenet_engine", "Usenet engine test", "Provider Tests", adminUIHandler.TestUsenetEngine))).Methods(http.MethodPost)
-	r.HandleFunc("/admin/api/test/usenet-engine/delete-artifact", adminUIHandler.RequireAuth(adminUIHandler.DeleteUsenetEngineTestArtifact)).Methods(http.MethodPost)
-	r.HandleFunc("/admin/api/test/debrid-provider", adminUIHandler.RequireAuth(apiusage.Track("connections.test.debrid_provider", "Debrid provider test", "Provider Tests", adminUIHandler.TestDebridProvider))).Methods(http.MethodPost)
-	r.HandleFunc("/admin/api/test/subtitles", adminUIHandler.RequireAuth(apiusage.Track("connections.test.subtitles", "Subtitles test", "Provider Tests", adminUIHandler.TestSubtitles))).Methods(http.MethodPost)
-	r.HandleFunc("/admin/api/test/metadata", adminUIHandler.RequireAuth(apiusage.Track("connections.test.metadata", "Metadata test", "Provider Tests", adminUIHandler.TestMetadata))).Methods(http.MethodPost)
-	r.HandleFunc("/admin/api/resolved-nzbs", adminUIHandler.RequireAuth(adminUIHandler.ListResolvedNZBs)).Methods(http.MethodGet)
-	r.HandleFunc("/admin/api/resolved-nzbs/{key}", adminUIHandler.RequireAuth(adminUIHandler.DeleteResolvedNZB)).Methods(http.MethodDelete)
-	r.HandleFunc("/admin/api/test/mdblist", adminUIHandler.RequireAuth(apiusage.Track("connections.test.mdblist", "MDBList test", "Provider Tests", adminUIHandler.TestMDBList))).Methods(http.MethodPost)
-	r.HandleFunc("/admin/api/test/live", adminUIHandler.RequireAuth(apiusage.Track("connections.test.live", "Live TV test", "Provider Tests", adminUIHandler.TestLiveTV))).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/test/indexer", adminUIHandler.RequireMasterAuth(apiusage.Track("connections.test.indexer", "Indexer test", "Provider Tests", adminUIHandler.TestIndexer))).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/test/scraper", adminUIHandler.RequireMasterAuth(apiusage.Track("connections.test.scraper", "Scraper test", "Provider Tests", adminUIHandler.TestScraper))).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/test/usenet-provider", adminUIHandler.RequireMasterAuth(apiusage.Track("connections.test.usenet_provider", "Usenet provider test", "Provider Tests", adminUIHandler.TestUsenetProvider))).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/test/usenet-engine", adminUIHandler.RequireMasterAuth(apiusage.Track("connections.test.usenet_engine", "Usenet engine test", "Provider Tests", adminUIHandler.TestUsenetEngine))).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/test/usenet-engine/delete-artifact", adminUIHandler.RequireMasterAuth(adminUIHandler.DeleteUsenetEngineTestArtifact)).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/test/debrid-provider", adminUIHandler.RequireMasterAuth(apiusage.Track("connections.test.debrid_provider", "Debrid provider test", "Provider Tests", adminUIHandler.TestDebridProvider))).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/test/subtitles", adminUIHandler.RequireMasterAuth(apiusage.Track("connections.test.subtitles", "Subtitles test", "Provider Tests", adminUIHandler.TestSubtitles))).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/test/metadata", adminUIHandler.RequireMasterAuth(apiusage.Track("connections.test.metadata", "Metadata test", "Provider Tests", adminUIHandler.TestMetadata))).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/resolved-nzbs", adminUIHandler.RequireMasterAuth(adminUIHandler.ListResolvedNZBs)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/resolved-nzbs/{key}", adminUIHandler.RequireMasterAuth(adminUIHandler.DeleteResolvedNZB)).Methods(http.MethodDelete)
+	r.HandleFunc("/admin/api/test/mdblist", adminUIHandler.RequireMasterAuth(apiusage.Track("connections.test.mdblist", "MDBList test", "Provider Tests", adminUIHandler.TestMDBList))).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/test/live", adminUIHandler.RequireMasterAuth(apiusage.Track("connections.test.live", "Live TV test", "Provider Tests", adminUIHandler.TestLiveTV))).Methods(http.MethodPost)
 	r.HandleFunc("/admin/api/connections/search-diagnostics", adminUIHandler.RequireMasterAuth(apiusage.Track("connections.search.diagnostics", "Search diagnostics", "Search Diagnostics", adminUIHandler.RunSearchDiagnostics))).Methods(http.MethodPost)
 	r.HandleFunc("/admin/api/connections/search-timeout", adminUIHandler.RequireMasterAuth(apiusage.Track("connections.search.timeout", "Save search timeout", "Search Diagnostics", adminUIHandler.SaveSearchTimeout))).Methods(http.MethodPost)
 	r.HandleFunc("/admin/api/connections/usage", adminUIHandler.RequireMasterAuth(adminUIHandler.GetConnectionsUsage)).Methods(http.MethodGet)
-	r.HandleFunc("/admin/api/logs/database", adminUIHandler.RequireAuth(logsHandler.SubmitDatabaseSnapshot)).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/logs/database", adminUIHandler.RequireMasterAuth(logsHandler.SubmitDatabaseSnapshot)).Methods(http.MethodPost)
 
 	// Profile management endpoints
 	r.HandleFunc("/admin/api/profiles", adminUIHandler.RequireAuth(adminUIHandler.GetProfiles)).Methods(http.MethodGet)

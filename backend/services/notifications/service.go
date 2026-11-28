@@ -108,14 +108,28 @@ func WithClients(clients clientProvider) Option {
 	return func(s *Service) { s.clients = clients }
 }
 
+// WithMasterCheck supplies the lookup used to decide whether a profile belongs
+// to a master (admin) account. Generic webhook channels are only delivered for
+// such profiles.
+func WithMasterCheck(fn func(profileID string) bool) Option {
+	return func(s *Service) { s.profileIsMaster = fn }
+}
+
+// ErrGenericWebhookAdminOnly is returned when a non-admin account tries to use
+// a generic webhook channel.
+var ErrGenericWebhookAdminOnly = errors.New("generic webhooks can only be managed by an administrator; use a Discord destination instead")
+
 // Service owns profile notification configuration, formatting, and delivery.
 type Service struct {
-	profiles   profileProvider
-	clients    clientProvider
-	repo       datastore.NotificationRepository
-	httpClient *http.Client
-	deliveries chan delivery
-	stop       chan struct{}
+	profiles profileProvider
+	clients  clientProvider
+	// profileIsMaster reports whether a profile's owning account is a master
+	// account. Nil means every profile is allowed generic webhooks.
+	profileIsMaster func(profileID string) bool
+	repo            datastore.NotificationRepository
+	httpClient      *http.Client
+	deliveries      chan delivery
+	stop            chan struct{}
 
 	sessionMu sync.Mutex
 	sessions  map[string]playbackSession
@@ -134,7 +148,8 @@ func New(repo datastore.NotificationRepository, options ...Option) *Service {
 	s := &Service{
 		repo: repo,
 		httpClient: &http.Client{
-			Timeout: 10 * time.Second,
+			Timeout:       10 * time.Second,
+			CheckRedirect: sameHostRedirect,
 		},
 		deliveries:        make(chan delivery, 256),
 		stop:              make(chan struct{}),
@@ -949,6 +964,11 @@ func (s *Service) pruneProgressDeliveries() {
 }
 
 func (s *Service) deliver(ctx context.Context, channel models.NotificationChannel, event models.NotificationEvent) error {
+	if channel.Type == models.NotificationChannelWebhook && s.profileIsMaster != nil && !s.profileIsMaster(channel.ProfileID) {
+		log.Printf("[notifications] skipping generic webhook channel %s: only administrator accounts may use generic webhooks (profile=%s)",
+			channel.ID, channel.ProfileID)
+		return nil
+	}
 	event = s.withDeviceName(s.withProfileName(channel, event))
 	title, body := Format(channel, event)
 	var payload any
@@ -1293,6 +1313,55 @@ func render(template string, values map[string]string) string {
 		result = strings.ReplaceAll(result, "{{"+key+"}}", values[key])
 	}
 	return strings.TrimSpace(result)
+}
+
+// sameHostRedirect refuses redirects that leave the configured webhook host, so
+// a destination cannot bounce deliveries to a different (e.g. internal) host.
+func sameHostRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 5 {
+		return errors.New("stopped after 5 redirects")
+	}
+	if !sameRedirectHost(req.URL, via[0].URL) {
+		return errors.New("webhook redirected to a different host")
+	}
+	return nil
+}
+
+// sameRedirectHost compares hostnames case-insensitively with default ports
+// normalised, and treats discord.com and discordapp.com (and their
+// subdomains) as one host.
+func sameRedirectHost(a, b *url.URL) bool {
+	ha, hb := strings.ToLower(a.Hostname()), strings.ToLower(b.Hostname())
+	if ha != hb && !(isDiscordHost(ha) && isDiscordHost(hb)) {
+		return false
+	}
+	// Same port, or each on its scheme's default port (http->https upgrade).
+	return effectivePort(a) == effectivePort(b) || (defaultPort(a) && defaultPort(b))
+}
+
+func effectivePort(u *url.URL) string {
+	if p := u.Port(); p != "" {
+		return p
+	}
+	if strings.EqualFold(u.Scheme, "http") {
+		return "80"
+	}
+	return "443"
+}
+
+func defaultPort(u *url.URL) bool {
+	p := effectivePort(u)
+	return (strings.EqualFold(u.Scheme, "http") && p == "80") || (strings.EqualFold(u.Scheme, "https") && p == "443")
+}
+
+func isDiscordHost(host string) bool {
+	host = strings.ToLower(host)
+	for _, d := range []string{"discord.com", "discordapp.com"} {
+		if host == d || strings.HasSuffix(host, "."+d) {
+			return true
+		}
+	}
+	return false
 }
 
 func validateDestination(kind, rawURL string) error {

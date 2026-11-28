@@ -32,7 +32,7 @@
                     <label class="form-label" for="channel-type">Service</label>
                     <select class="form-input" id="channel-type">
                         <option value="discord">Discord webhook</option>
-                        <option value="webhook">Generic webhook</option>
+                        {{if .IsAdmin}}<option value="webhook">Generic webhook</option>{{end}}
                     </select>
                 </div>
             </div>

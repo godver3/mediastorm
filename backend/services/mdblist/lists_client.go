@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"novastream/internal/urlredact"
 	"sync"
 	"time"
 
@@ -174,7 +175,7 @@ func (c *ListsClient) getJSON(ctx context.Context, endpoint string, out interfac
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("mdblist api request: %w", err)
+		return fmt.Errorf("mdblist api request: %w", urlredact.Error(err))
 	}
 	defer resp.Body.Close()
 

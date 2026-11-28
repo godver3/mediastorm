@@ -3,6 +3,7 @@ package metadata
 import (
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"time"
 
@@ -46,7 +47,7 @@ func (ms *MetadataService) truncateFilename(filename string) string {
 // WriteFileMetadata writes file metadata to disk
 func (ms *MetadataService) WriteFileMetadata(virtualPath string, metadata *metapb.FileMetadata) error {
 	// Ensure the directory exists
-	metadataDir := filepath.Join(ms.rootPath, filepath.Dir(virtualPath))
+	metadataDir := ms.resolvePath(filepath.Dir(virtualPath))
 	if err := os.MkdirAll(metadataDir, 0755); err != nil {
 		return fmt.Errorf("failed to create metadata directory: %w", err)
 	}
@@ -74,7 +75,7 @@ func (ms *MetadataService) WriteFileMetadata(virtualPath string, metadata *metap
 func (ms *MetadataService) ReadFileMetadata(virtualPath string) (*metapb.FileMetadata, error) {
 	// Create metadata file path
 	filename := filepath.Base(virtualPath)
-	metadataDir := filepath.Join(ms.rootPath, filepath.Dir(virtualPath))
+	metadataDir := ms.resolvePath(filepath.Dir(virtualPath))
 	metadataPath := filepath.Join(metadataDir, filename+".meta")
 
 	// Read file
@@ -99,7 +100,7 @@ func (ms *MetadataService) ReadFileMetadata(virtualPath string) (*metapb.FileMet
 func (ms *MetadataService) FileExists(virtualPath string) bool {
 	filename := filepath.Base(virtualPath)
 	truncatedFilename := ms.truncateFilename(filename)
-	metadataDir := filepath.Join(ms.rootPath, filepath.Dir(virtualPath))
+	metadataDir := ms.resolvePath(filepath.Dir(virtualPath))
 	metadataPath := filepath.Join(metadataDir, truncatedFilename+".meta")
 
 	_, err := os.Stat(metadataPath)
@@ -108,14 +109,14 @@ func (ms *MetadataService) FileExists(virtualPath string) bool {
 
 // DirectoryExists checks if a metadata directory exists
 func (ms *MetadataService) DirectoryExists(virtualPath string) bool {
-	metadataDir := filepath.Join(ms.rootPath, virtualPath)
+	metadataDir := ms.resolvePath(virtualPath)
 	info, err := os.Stat(metadataDir)
 	return err == nil && info.IsDir()
 }
 
 // ListDirectory lists all metadata files in a directory
 func (ms *MetadataService) ListDirectory(virtualPath string) ([]string, error) {
-	metadataDir := filepath.Join(ms.rootPath, virtualPath)
+	metadataDir := ms.resolvePath(virtualPath)
 
 	entries, err := os.ReadDir(metadataDir)
 	if err != nil {
@@ -139,7 +140,7 @@ func (ms *MetadataService) ListDirectory(virtualPath string) ([]string, error) {
 
 // ListSubdirectories lists all subdirectories in a metadata directory
 func (ms *MetadataService) ListSubdirectories(virtualPath string) ([]string, error) {
-	metadataDir := filepath.Join(ms.rootPath, virtualPath)
+	metadataDir := ms.resolvePath(virtualPath)
 
 	entries, err := os.ReadDir(metadataDir)
 	if err != nil {
@@ -215,7 +216,7 @@ func (ms *MetadataService) UpdateFileStatus(virtualPath string, status metapb.Fi
 // DeleteFileMetadata deletes a metadata file
 func (ms *MetadataService) DeleteFileMetadata(virtualPath string) error {
 	filename := filepath.Base(virtualPath)
-	metadataDir := filepath.Join(ms.rootPath, filepath.Dir(virtualPath))
+	metadataDir := ms.resolvePath(filepath.Dir(virtualPath))
 	metadataPath := filepath.Join(metadataDir, filename+".meta")
 
 	err := os.Remove(metadataPath)
@@ -228,7 +229,10 @@ func (ms *MetadataService) DeleteFileMetadata(virtualPath string) error {
 
 // DeleteDirectory deletes a metadata directory and all its contents
 func (ms *MetadataService) DeleteDirectory(virtualPath string) error {
-	metadataDir := filepath.Join(ms.rootPath, virtualPath)
+	metadataDir := ms.resolvePath(virtualPath)
+	if filepath.Clean(metadataDir) == filepath.Clean(ms.rootPath) {
+		return fmt.Errorf("refusing to delete the metadata root")
+	}
 
 	err := os.RemoveAll(metadataDir)
 	if err != nil && !os.IsNotExist(err) {
@@ -270,13 +274,13 @@ func (ms *MetadataService) CalculateSegmentSize(segments []*metapb.SegmentData) 
 // GetMetadataFilePath returns the filesystem path for a metadata file
 func (ms *MetadataService) GetMetadataFilePath(virtualPath string) string {
 	filename := filepath.Base(virtualPath)
-	metadataDir := filepath.Join(ms.rootPath, filepath.Dir(virtualPath))
+	metadataDir := ms.resolvePath(filepath.Dir(virtualPath))
 	return filepath.Join(metadataDir, filename+".meta")
 }
 
 // GetMetadataDirectoryPath returns the filesystem path for a metadata directory
 func (ms *MetadataService) GetMetadataDirectoryPath(virtualPath string) string {
-	return filepath.Join(ms.rootPath, virtualPath)
+	return ms.resolvePath(virtualPath)
 }
 
 // CreateSegmentData creates a new SegmentData with the given parameters
@@ -329,4 +333,12 @@ func (ms *MetadataService) WalkMetadata(walkFunc func(virtualPath string, metada
 
 		return nil
 	})
+}
+
+// resolvePath maps a virtual path to a location inside rootPath. The path is
+// cleaned as an absolute slash path first so ".." segments can never climb out
+// of the metadata root.
+func (ms *MetadataService) resolvePath(virtualPath string) string {
+	cleaned := path.Clean("/" + filepath.ToSlash(virtualPath))
+	return filepath.Join(ms.rootPath, filepath.FromSlash(cleaned))
 }

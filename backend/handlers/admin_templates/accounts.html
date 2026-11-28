@@ -411,7 +411,7 @@ function renderProfiles() {
 
         const avatarHtml = p.hasIcon
             ? `<img class="profile-avatar" src="${basePath}/api/profiles/icon?profileId=${p.id}" alt="${escapeHtml(p.name)}" style="object-fit: cover;">`
-            : `<div class="profile-avatar" style="background: ${p.color || '#6366f1'};">${initial}</div>`;
+            : `<div class="profile-avatar" style="background: ${safeProfileColor(p.color, '#6366f1')};">${initial}</div>`;
         return `
             <div class="profile-row">
                 ${avatarHtml}
@@ -548,7 +548,7 @@ function renderPersonRow(profile, forceShowStale = false) {
     const initial = (profile.name || 'P').charAt(0).toUpperCase();
     const avatarHtml = profile.hasIcon
         ? `<img class="person-avatar" src="${basePath}/api/profiles/icon?profileId=${encodeURIComponent(profile.id)}" alt="${escapeHtml(profile.name)}">`
-        : `<div class="person-avatar" style="background:${profile.color || '#6366f1'};">${escapeHtml(initial)}</div>`;
+        : `<div class="person-avatar" style="background:${safeProfileColor(profile.color, '#6366f1')};">${escapeHtml(initial)}</div>`;
     const badges = [];
     if (profile.isKidsProfile) badges.push('<span class="status-badge warning" style="font-size:0.62rem;">Kids</span>');
     if (profile.hasPin) badges.push('<span class="status-badge" style="font-size:0.62rem;">PIN</span>');
@@ -1997,6 +1997,9 @@ async function revokeConnectionInvite(inviteId) {
     }
 }
 
+function safeProfileColor(c, fallback) {
+    return (typeof c === 'string' && /^(#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})|[a-zA-Z]{1,32})$/.test(c)) ? c : fallback;
+}
 function escapeHtml(str) {
     if (!str) return '';
     return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');

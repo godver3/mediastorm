@@ -536,7 +536,7 @@ func (c *geminiClient) doJSONWithRetry(ctx context.Context, method, endpoint str
 			req.Header.Set(k, v)
 		}
 
-		resp, err := c.httpc.Do(req)
+		resp, err := doRedacted(c.httpc, req)
 		if err != nil {
 			lastErr = err
 			log.Printf("[%s] %s http error (attempt %d/3): %v", logPrefix, label, attempt+1, err)

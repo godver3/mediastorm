@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"novastream/internal/urlredact"
 	"os"
 	"path/filepath"
 	"sort"
@@ -590,7 +591,7 @@ func Do(client *http.Client, provider, operation string, req *http.Request) (*ht
 		}
 	}
 	GetTracker().RecordOutbound(provider, operation, method, rawURL, status, time.Since(startedAt))
-	return resp, err
+	return resp, urlredact.Error(err)
 }
 
 func (w *statusRecorder) WriteHeader(status int) {

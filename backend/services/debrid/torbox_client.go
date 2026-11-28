@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"novastream/internal/apiusage"
+	"novastream/internal/urlredact"
 )
 
 // TorboxClient handles API interactions with Torbox service.
@@ -149,7 +150,8 @@ func (c *TorboxClient) doRequest(req *http.Request) (*http.Response, error) {
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.apiKey))
 	req.Header.Set("User-Agent", "mediastorm/1.0")
 	req.Header.Set("Accept", "application/json")
-	return c.httpClient.Do(req)
+	resp, err := c.httpClient.Do(req)
+	return resp, urlredact.Error(err)
 }
 
 func torboxAuthError(statusCode int, body []byte) error {

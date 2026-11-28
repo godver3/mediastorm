@@ -72,7 +72,7 @@ func NewHandler(
 
 					if userID != "" {
 						user, err := userRepo.GetUserByID(userID)
-						if err == nil && user != nil {
+						if err == nil && user != nil && jwtMethodAllowed(r.Method, user.IsAdmin) {
 							authenticated = true
 						}
 					}
@@ -218,4 +218,15 @@ func (h *Handler) SyncAuthCredentials() {
 		h.authCreds.UpdateCredentials(currentConfig.WebDAV.User, currentConfig.WebDAV.Password)
 		slog.Debug("WebDAV auth credentials synced from config")
 	}
+}
+
+// jwtMethodAllowed reports whether a JWT-authenticated user may use the given
+// WebDAV method. Read-only methods are open to any valid user; everything that
+// can modify the tree requires an admin.
+func jwtMethodAllowed(method string, isAdmin bool) bool {
+	switch strings.ToUpper(method) {
+	case http.MethodGet, http.MethodHead, http.MethodOptions, "PROPFIND":
+		return true
+	}
+	return isAdmin
 }
