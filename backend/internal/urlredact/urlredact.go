@@ -15,22 +15,35 @@ func String(s string) string {
 	return keyParamRe.ReplaceAllString(s, "${1}REDACTED")
 }
 
-// Error returns err with any API key removed from the request URL it carries.
-// The original error is kept in the chain where possible (url.Error is copied
-// with its URL redacted); other errors are rewritten only if they leak a key.
+// Error returns err with any API key removed from the messages it carries.
+// The error chain is kept where possible: a url.Error is copied with its URL
+// redacted, and wrapping errors keep their own message (redacted) around the
+// cleaned inner error, so errors.Is/As still work.
 func Error(err error) error {
 	if err == nil {
 		return nil
 	}
-	var ue *url.Error
-	if errors.As(err, &ue) {
+	msg := err.Error()
+	redacted := String(msg)
+	if redacted == msg {
+		return err
+	}
+	if ue, ok := err.(*url.Error); ok {
 		cp := *ue
 		cp.URL = String(ue.URL)
 		cp.Err = Error(ue.Err)
 		return &cp
 	}
-	if msg := err.Error(); String(msg) != msg {
-		return errors.New(String(msg))
+	if inner := errors.Unwrap(err); inner != nil {
+		return &redactedError{msg: redacted, inner: Error(inner)}
 	}
-	return err
+	return errors.New(redacted)
 }
+
+type redactedError struct {
+	msg   string
+	inner error
+}
+
+func (e *redactedError) Error() string { return e.msg }
+func (e *redactedError) Unwrap() error { return e.inner }

@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"novastream/internal/urlredact"
 )
 
 // SABnzbdClient handles communication with external SABnzbd instances
@@ -116,7 +118,7 @@ func (c *SABnzbdClient) SendNZBFile(host, apiKey, nzbPath string, category *stri
 	// Send the request
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("failed to send request to SABnzbd: %w", err)
+		return "", fmt.Errorf("failed to send request to SABnzbd: %w", urlredact.Error(err))
 	}
 	defer resp.Body.Close()
 
