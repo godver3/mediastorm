@@ -517,8 +517,12 @@ func (h *MetadataHandler) Search(w http.ResponseWriter, r *http.Request) {
 		requestClientID(r),
 		unreleasedVisibilitySearch,
 	)
-	// Always load release windows: release badges need them even when unreleased titles are shown.
-	enrichSearchMovieReleaseVisibility(r.Context(), results, service)
+	// Search is cache-only: Service.Search already hydrates cached release
+	// windows for badges, so only do the provider-backed lookup when
+	// unreleased movies must be filtered out.
+	if !policy.IncludeMovies {
+		enrichSearchMovieReleaseVisibility(r.Context(), results, service)
+	}
 	results = filterSearchResultsByUnreleasedVisibility(results, policy)
 
 	// Apply kids rating filter if user is a kids profile with rating mode
