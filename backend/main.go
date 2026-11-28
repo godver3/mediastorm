@@ -1528,7 +1528,7 @@ func main() {
 	r.HandleFunc("/admin/api/connections/search-diagnostics", adminUIHandler.RequireMasterAuth(apiusage.Track("connections.search.diagnostics", "Search diagnostics", "Search Diagnostics", adminUIHandler.RunSearchDiagnostics))).Methods(http.MethodPost)
 	r.HandleFunc("/admin/api/connections/search-timeout", adminUIHandler.RequireMasterAuth(apiusage.Track("connections.search.timeout", "Save search timeout", "Search Diagnostics", adminUIHandler.SaveSearchTimeout))).Methods(http.MethodPost)
 	r.HandleFunc("/admin/api/connections/usage", adminUIHandler.RequireMasterAuth(adminUIHandler.GetConnectionsUsage)).Methods(http.MethodGet)
-	r.HandleFunc("/admin/api/logs/database", adminUIHandler.RequireAuth(logsHandler.SubmitDatabaseSnapshot)).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/logs/database", adminUIHandler.RequireMasterAuth(logsHandler.SubmitDatabaseSnapshot)).Methods(http.MethodPost)
 
 	// Profile management endpoints
 	r.HandleFunc("/admin/api/profiles", adminUIHandler.RequireAuth(adminUIHandler.GetProfiles)).Methods(http.MethodGet)

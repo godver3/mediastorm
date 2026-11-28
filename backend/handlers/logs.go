@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"novastream/internal/auth"
 	"novastream/internal/datastore"
 	"novastream/models"
 )
@@ -263,7 +264,14 @@ func (h *LogsHandler) Submit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pasteURL, err := h.SubmitLogsPackage(payload.FrontendLogs, nil)
+	// The combined package embeds the server log, which can contain other
+	// users' activity. Non-admin accounts may only send the client logs they
+	// supplied themselves.
+	submit := h.SubmitLogsPackage
+	if !auth.IsMaster(r) {
+		submit = h.submitClientLogsPackage
+	}
+	pasteURL, err := submit(payload.FrontendLogs, nil)
 	if err != nil {
 		h.logger.Printf("[logs] Failed to submit to paste service: %v", err)
 		h.respondError(w, fmt.Sprintf("failed to submit logs: %v", err), http.StatusInternalServerError)
@@ -347,6 +355,12 @@ func (h *LogsHandler) SubmitDatabaseSnapshot(w http.ResponseWriter, r *http.Requ
 
 	if r.Method != http.MethodPost {
 		h.respondError(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// The snapshot covers every profile's watch data, so it is admin-only.
+	if !auth.IsMaster(r) {
+		h.respondError(w, "admin access required", http.StatusForbidden)
 		return
 	}
 
@@ -436,6 +450,21 @@ func (h *LogsHandler) SubmitLogsPackage(frontendLogs string, snapshot *frontendL
 	pasteContent := h.buildCombinedLogPackage(frontendLogs, snapshot)
 	pasteContent = redactLogUploadContent(pasteContent)
 	return h.submitToPaste(pasteContent)
+}
+
+// submitClientLogsPackage uploads only the caller-supplied client logs, without
+// the server log.
+func (h *LogsHandler) submitClientLogsPackage(frontendLogs string, _ *frontendLogSnapshot) (string, error) {
+	var b strings.Builder
+	b.WriteString("STRMR CLIENT LOG SUBMISSION\n")
+	b.WriteString(fmt.Sprintf("Submitted: %s\n\n", time.Now().In(logDisplayLocation()).Format(time.RFC3339)))
+	frontendLogs = lastNLogLines(frontendLogs, maxLogLines)
+	if strings.TrimSpace(frontendLogs) == "" {
+		b.WriteString("[No frontend logs provided]\n")
+	} else {
+		b.WriteString(frontendLogs)
+	}
+	return h.submitToPaste(redactLogUploadContent(b.String()))
 }
 
 func (h *LogsHandler) SubmitStoredLogsPackage(clientID string) (string, error) {
