@@ -3710,3 +3710,38 @@ func TestApplyDateBasedSeriesClassificationFromFinalGenres(t *testing.T) {
 		t.Fatalf("classification = changed:%v daily:%v genre:%q", changed, title.IsDaily, genre)
 	}
 }
+
+// With TVDB configured, a request carrying only titleId "tmdb:movie:N" must
+// still reach the TMDB fallback (it used to fail: "no tmdb fallback available").
+func TestMovieDetailsReadsTMDBIDFromTitleIDWhenTVDBConfigured(t *testing.T) {
+	cache := newFileCache(t.TempDir(), 24)
+	const tmdbID int64 = 550
+	if err := cache.set(
+		cacheKey("tmdb", "movie", "details", "v4", "eng", strconv.FormatInt(tmdbID, 10)),
+		models.Title{ID: "tmdb:movie:550", Name: "Fight Club", MediaType: "movie", TMDBID: tmdbID},
+	); err != nil {
+		t.Fatalf("seed details cache: %v", err)
+	}
+	if err := cache.set(
+		cacheKey("tmdb", "images", "v10", "eng", "movie", strconv.FormatInt(tmdbID, 10)),
+		tmdbImagesResult{},
+	); err != nil {
+		t.Fatalf("seed images cache: %v", err)
+	}
+	notFound := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader(`{}`)), Header: http.Header{}, Request: req}, nil
+	})
+	svc := &Service{
+		client: newTVDBClient("tvdb-key", "en", &http.Client{Transport: notFound}, 24),
+		tmdb:   newTMDBClient("tmdb-key", "en", &http.Client{Transport: notFound}, cache),
+		cache:  cache,
+	}
+
+	got, err := svc.MovieDetails(t.Context(), models.MovieDetailsQuery{TitleID: "tmdb:movie:550"})
+	if err != nil {
+		t.Fatalf("MovieDetails: %v", err)
+	}
+	if got.TMDBID != tmdbID || got.Name != "Fight Club" {
+		t.Fatalf("MovieDetails = %#v, want cached TMDB movie", got)
+	}
+}

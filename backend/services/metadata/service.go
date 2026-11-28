@@ -7479,6 +7479,12 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 
 	metadataTracef("[metadata] movie details request titleId=%q name=%q year=%d tvdbId=%d tmdbId=%d imdbId=%s",
 		strings.TrimSpace(req.TitleID), strings.TrimSpace(req.Name), req.Year, req.TVDBID, req.TMDBID, strings.TrimSpace(req.IMDBID))
+	// A "tmdb:movie:N" title ID carries the TMDB ID; read it whether or not TVDB
+	// is configured, otherwise a TVDB setup with only titleId has no ID to resolve.
+	// Only the prefixed form: a bare number may be a TVDB ID here.
+	if req.TMDBID <= 0 && strings.HasPrefix(strings.ToLower(strings.TrimSpace(req.TitleID)), "tmdb:") {
+		req.TMDBID = parseTMDBIDFromTitleID(req.TitleID)
+	}
 	// A stored TVDB identifier is still useful for cross-provider matching, but it
 	// must not force a TVDB request when the provider itself is disabled.
 	if !s.client.isConfigured() {
