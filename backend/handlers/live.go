@@ -523,6 +523,17 @@ func (h *LiveHandler) FetchPlaylist(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(body)
 }
 
+// liveStoppedMessage is the refusal a player shows for a channel stopped from the dashboard.
+const liveStoppedMessage = "Playback was stopped from the server dashboard."
+
+// writeLivePlaybackStopped refuses a live tune or stream with the error envelope
+// the apps show as is.
+func writeLivePlaybackStopped(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusGone)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": liveStoppedMessage, "code": "playback_stopped"})
+}
+
 func (h *LiveHandler) StreamChannel(w http.ResponseWriter, r *http.Request) {
 	requestID := atomic.AddUint64(&liveStreamRequestSequence, 1)
 	requestStartedAt := time.Now()
@@ -548,6 +559,11 @@ func (h *LiveHandler) StreamChannel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !requireLiveStreamProfile(w, r, h.usersSvc) {
+		return
+	}
+	if GetStreamTracker().PlaybackBlocked(r) {
+		log.Printf("[live-request] id=%d reject reason=stopped-from-dashboard", requestID)
+		writeLivePlaybackStopped(w)
 		return
 	}
 	hdHomeRunInput, err := authorizeLiveStreamURL(r, r.URL.Query().Get("url"), h.cfgManager, h)

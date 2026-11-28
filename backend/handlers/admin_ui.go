@@ -3739,6 +3739,7 @@ func (h *AdminUIHandler) TerminateStream(w http.ResponseWriter, r *http.Request)
 			profileName := session.ProfileName
 			mediaType := session.MediaMetadata.MediaType
 			itemID := session.MediaMetadata.ItemID
+			meta := session.MediaMetadata
 			session.mu.RUnlock()
 
 			if !isAdmin && !h.profileBelongsToAccount(profileID, accountID) {
@@ -3748,13 +3749,15 @@ func (h *AdminUIHandler) TerminateStream(w http.ResponseWriter, r *http.Request)
 
 			// Players that don't heartbeat (live TV) or ignore the stop never
 			// leave on their own, so the session is torn down after a grace that
-			// lets a heartbeat stop a well-behaved player cleanly first. A session
-			// with no media identity (live) can't be flagged and goes straight away.
-			grace := hlsTerminateGrace
-			if GetStreamTracker().MarkStopPlaybackForProfileMedia(profileID, profileName, mediaType, itemID) {
+			// lets a heartbeat stop a well-behaved player cleanly first. Live
+			// players don't heartbeat, so a live session goes straight away and its
+			// channel is blocked: the player's automatic retune is refused.
+			grace := time.Duration(0)
+			if GetStreamTracker().MarkStopLivePlayback(profileID, profileName, meta) {
+				log.Printf("[admin-ui] blocked live channel of HLS stream %s", streamID)
+			} else if GetStreamTracker().MarkStopPlaybackForProfileMedia(profileID, profileName, mediaType, itemID) {
 				log.Printf("[admin-ui] marked HLS stream %s to stop on heartbeat", streamID)
-			} else {
-				grace = 0
+				grace = hlsTerminateGrace
 			}
 			manager := h.hlsManager
 			time.AfterFunc(grace, func() {

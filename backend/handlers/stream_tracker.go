@@ -565,21 +565,27 @@ func (t *StreamTracker) markStopKeysLocked(keys []string) {
 func (t *StreamTracker) PlaybackBlocked(r *http.Request) bool {
 	q := r.URL.Query()
 	meta := parseStreamMediaMetadata(r)
-	if meta.ItemID == "" {
-		return false
-	}
 	profileID := q.Get("profileId")
 	if profileID == "" {
 		profileID = q.Get("userId")
 	}
+	profileName := q.Get("profileName")
+	keys := liveControlKeys(profileID, profileName, meta)
+	if meta.ItemID != "" {
+		for _, userID := range []string{profileID, profileName} {
+			if strings.TrimSpace(userID) != "" {
+				keys = append(keys, playbackControlKey(userID, meta.MediaType, meta.ItemID))
+			}
+		}
+	}
+	if len(keys) == 0 {
+		return false
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.pruneStopSignalsLocked()
-	for _, userID := range []string{profileID, q.Get("profileName")} {
-		if strings.TrimSpace(userID) == "" {
-			continue
-		}
-		if _, ok := t.blockedPlaybacks[playbackControlKey(userID, meta.MediaType, meta.ItemID)]; ok {
+	for _, key := range keys {
+		if _, ok := t.blockedPlaybacks[key]; ok {
 			return true
 		}
 	}
@@ -647,8 +653,12 @@ func (t *StreamTracker) recordPlaybackMigrationSignalLocked(key string, signal p
 }
 
 func streamPlaybackControlKeys(stream *TrackedStream) []string {
-	if stream == nil || strings.TrimSpace(stream.MediaMetadata.ItemID) == "" {
+	if stream == nil {
 		return nil
+	}
+	live := liveControlKeys(stream.ProfileID, stream.ProfileName, stream.MediaMetadata)
+	if strings.TrimSpace(stream.MediaMetadata.ItemID) == "" {
+		return live
 	}
 
 	seen := make(map[string]bool)
@@ -667,7 +677,42 @@ func streamPlaybackControlKeys(stream *TrackedStream) []string {
 
 	add(stream.ProfileID)
 	add(stream.ProfileName)
+	return append(keys, live...)
+}
+
+// liveControlKeys identifies a live channel's playback by profile and channel URL:
+// live channels often have no item ID, and the URL rides on every live request
+// (the tune, its direct stream, the HLS session's metadata).
+func liveControlKeys(profileID, profileName string, meta StreamMediaMetadata) []string {
+	if meta.MediaType != "channel" && meta.MediaType != "live" {
+		return nil
+	}
+	channelURL := strings.TrimSpace(meta.LiveSourceURL)
+	if channelURL == "" {
+		return nil
+	}
+	var keys []string
+	for _, userID := range []string{profileID, profileName} {
+		if strings.TrimSpace(userID) != "" {
+			keys = append(keys, playbackControlKey(userID, "live", channelURL))
+		}
+	}
 	return keys
+}
+
+// MarkStopLivePlayback blocks a live channel's playback for the profile: its
+// tune and stream requests are refused for the block window, so a player's
+// automatic retune can't bring it back.
+func (t *StreamTracker) MarkStopLivePlayback(profileID, profileName string, meta StreamMediaMetadata) bool {
+	keys := liveControlKeys(profileID, profileName, meta)
+	if len(keys) == 0 {
+		return false
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.pruneStopSignalsLocked()
+	t.markStopKeysLocked(keys)
+	return true
 }
 
 func trackedStreamSlotKey(stream *TrackedStream) string {

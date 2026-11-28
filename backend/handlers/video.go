@@ -5320,6 +5320,13 @@ func (h *VideoHandler) StartLiveHLSSession(w http.ResponseWriter, r *http.Reques
 	if !requireLiveStreamProfile(w, r, h.usersSvc) {
 		return
 	}
+	// A channel stopped from the dashboard can't be tuned again for the block
+	// window, so a player's automatic retune gives up with this message.
+	if GetStreamTracker().PlaybackBlocked(r) {
+		log.Printf("[video] refusing live tune for stopped playback profile=%s", profileID)
+		writeLivePlaybackStopped(w)
+		return
+	}
 	hdHomeRunInput, authorizeErr := authorizeLiveStreamURL(r, liveURL, h.configManager, h.liveChannels)
 	if authorizeErr != nil {
 		http.Error(w, "external media URL is not allowed", http.StatusBadRequest)

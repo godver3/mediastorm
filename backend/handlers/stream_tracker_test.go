@@ -951,3 +951,46 @@ func TestStoppedPlaybackBlocksStreamsAfterHeartbeatConsumesStop(t *testing.T) {
 		t.Fatal("block leaked to another title")
 	}
 }
+
+func TestStoppedLiveChannelRefusesRetune(t *testing.T) {
+	tracker := newTestTracker()
+	channel := "http://iptv.example/ch7.ts"
+	// A direct live stream: no item ID, the channel URL rides as liveSourceUrl.
+	streamURL := "/live/stream?profileId=p1&mediaType=channel&url=http://resolved.example/x&liveSourceUrl=" + channel
+	id, _, _ := tracker.StartStreamWithAccount(httptest.NewRequest(http.MethodGet, streamURL, nil), "live", 0, 0, 0, "acct1")
+	if !tracker.MarkStopPlayback(id) {
+		t.Fatal("live stream without an item ID could not be stopped")
+	}
+
+	tune := "/live/hls/start?profileId=p1&mediaType=channel&url=" + channel
+	if !tracker.PlaybackBlocked(httptest.NewRequest(http.MethodGet, tune, nil)) {
+		t.Fatal("retune of the stopped channel was not refused")
+	}
+	if !tracker.PlaybackBlocked(httptest.NewRequest(http.MethodGet, streamURL, nil)) {
+		t.Fatal("direct stream of the stopped channel was not refused")
+	}
+	other := "/live/hls/start?profileId=p1&mediaType=channel&url=http://iptv.example/ch8.ts"
+	if tracker.PlaybackBlocked(httptest.NewRequest(http.MethodGet, other, nil)) {
+		t.Fatal("block leaked to another channel")
+	}
+	otherProfile := "/live/hls/start?profileId=p2&mediaType=channel&url=" + channel
+	if tracker.PlaybackBlocked(httptest.NewRequest(http.MethodGet, otherProfile, nil)) {
+		t.Fatal("block leaked to another profile")
+	}
+}
+
+func TestStoppedLiveHLSSessionBlocksChannel(t *testing.T) {
+	tracker := newTestTracker()
+	channel := "http://iptv.example/ch7.ts"
+	meta := StreamMediaMetadata{MediaType: "channel", LiveSourceURL: channel}
+	if !tracker.MarkStopLivePlayback("p1", "Liam", meta) {
+		t.Fatal("live HLS session could not be blocked")
+	}
+	byName := "/live/hls/start?profileName=Liam&mediaType=channel&url=" + channel
+	if !tracker.PlaybackBlocked(httptest.NewRequest(http.MethodGet, byName, nil)) {
+		t.Fatal("retune by profile name was not refused")
+	}
+	if tracker.MarkStopLivePlayback("p1", "", StreamMediaMetadata{MediaType: "movie", LiveSourceURL: channel}) {
+		t.Fatal("non-live metadata was treated as a live channel")
+	}
+}

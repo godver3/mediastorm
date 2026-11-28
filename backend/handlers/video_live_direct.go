@@ -123,6 +123,10 @@ func (h *VideoHandler) ServeLiveDirect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if GetStreamTracker().PlaybackBlocked(r) {
+		writeLivePlaybackStopped(w)
+		return
+	}
 	target, ok := h.acquireLiveDirectTarget(ticket, auth.GetAccountID(r))
 	if !ok {
 		http.NotFound(w, r)
