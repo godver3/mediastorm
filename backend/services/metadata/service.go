@@ -387,6 +387,7 @@ func (s *Service) StartBackgroundCacheManager(refreshInterval time.Duration) {
 	}
 	s.cacheStopCh = make(chan struct{})
 	go s.runRegionalDiscoveryWarmer(s.cacheStopCh)
+	go runCacheSweeper(s.cacheStopCh, s.cache, s.idCache, s.ratingsCache)
 
 	s.cacheStatusMu.Lock()
 	s.cacheStatus = CacheManagerStatus{
@@ -1392,6 +1393,9 @@ func (s *Service) ClearCache() error {
 	return nil
 }
 
+// emptyIMDBIDCacheTTL bounds how long a "no IMDb ID" mapping is trusted.
+const emptyIMDBIDCacheTTL = 6 * time.Hour
+
 // getIMDBIDForTMDB returns the IMDB ID for a TMDB ID, using cache when available.
 // ID mappings are cached with a longer TTL since they rarely change.
 func (s *Service) getIMDBIDForTMDB(ctx context.Context, mediaType string, tmdbID int64) string {
@@ -1399,12 +1403,24 @@ func (s *Service) getIMDBIDForTMDB(ctx context.Context, mediaType string, tmdbID
 		return ""
 	}
 
+	// Callers pass both "series" and "tv"; share one cache entry.
+	if mediaType == "series" {
+		mediaType = "tv"
+	}
+
 	// Check ID cache first
 	cacheID := cacheKey("id", "tmdb-to-imdb", mediaType, fmt.Sprintf("%d", tmdbID))
 	if s.idCache != nil {
 		var cached string
 		if ok, _ := s.idCache.get(cacheID, &cached); ok {
-			return cached
+			if cached != "" {
+				return cached
+			}
+			// Cached miss: only trust it for a short while, TMDB may gain the mapping.
+			var negCached string
+			if ok, _ := s.idCache.getWithMaxAge(cacheID, &negCached, emptyIMDBIDCacheTTL); ok {
+				return ""
+			}
 		}
 	}
 
@@ -1418,7 +1434,7 @@ func (s *Service) getIMDBIDForTMDB(ctx context.Context, mediaType string, tmdbID
 		return ""
 	}
 
-	// Cache the result (even empty string to avoid repeated lookups)
+	// Cache the result (even empty string to avoid repeated lookups; misses expire after emptyIMDBIDCacheTTL)
 	if s.idCache != nil {
 		if err := s.idCache.set(cacheID, imdbID); err != nil {
 			log.Printf("[metadata] failed to cache IMDB ID mapping: %v", err)
@@ -1472,7 +1488,7 @@ func (s *Service) backfillSeriesIMDBID(ctx context.Context, title *models.Title,
 		return changed
 	}
 	if strings.TrimSpace(title.IMDBID) == "" && title.TMDBID > 0 {
-		if imdbID := s.getIMDBIDForTMDB(ctx, "series", title.TMDBID); imdbID != "" {
+		if imdbID := s.getIMDBIDForTMDB(ctx, "tv", title.TMDBID); imdbID != "" {
 			title.IMDBID = imdbID
 			changed = true
 		}
@@ -7380,7 +7396,7 @@ func (s *Service) PersonDetails(ctx context.Context, personID int64) (*models.Pe
 	}
 
 	// Check cache first
-	cacheID := cacheKey("tmdb", "person", "details", fmt.Sprintf("%d", personID))
+	cacheID := cacheKey("tmdb", "person", "details", s.tmdb.language, fmt.Sprintf("%d", personID))
 	var cached models.PersonDetails
 	if ok, _ := s.cache.get(cacheID, &cached); ok {
 		log.Printf("[metadata] person details cache hit personId=%d filmography=%d", personID, len(cached.Filmography))
@@ -9172,7 +9188,7 @@ func (s *Service) cachedFetchCredits(ctx context.Context, mediaType string, tmdb
 	if s.tmdb == nil || !s.tmdb.isConfigured() {
 		return nil, errors.New("tmdb api key not configured")
 	}
-	key := cacheKey("tmdb", "credits", "v2", mediaType, fmt.Sprintf("%d", tmdbID))
+	key := cacheKey("tmdb", "credits", "v2", s.tmdb.language, mediaType, fmt.Sprintf("%d", tmdbID))
 	var cached models.Credits
 	if ok, _ := s.cache.get(key, &cached); ok {
 		return &cached, nil

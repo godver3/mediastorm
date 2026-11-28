@@ -286,9 +286,19 @@ func (c *Client) EnsureValidToken(account *config.TraktAccount, configManager *c
 	freshAccount.AccessToken = token.AccessToken
 	freshAccount.RefreshToken = token.RefreshToken
 	freshAccount.ExpiresAt = token.CreatedAt + int64(token.ExpiresIn)
-	settings.Trakt.UpdateAccount(*freshAccount)
+	accessToken, refreshToken, expiresAt := freshAccount.AccessToken, freshAccount.RefreshToken, freshAccount.ExpiresAt
 
-	if err := configManager.Save(settings); err != nil {
+	// Re-load and write only the token fields under the manager lock so a
+	// concurrent settings save cannot overwrite the single-use refresh token
+	// (or be clobbered by this stale copy).
+	if err := configManager.Update(func(cur *config.Settings) error {
+		a := cur.Trakt.GetAccountByID(account.ID)
+		if a == nil {
+			return fmt.Errorf("trakt account %s no longer exists", account.ID)
+		}
+		a.AccessToken, a.RefreshToken, a.ExpiresAt = accessToken, refreshToken, expiresAt
+		return nil
+	}); err != nil {
 		return "", fmt.Errorf("save refreshed trakt token: %w", err)
 	}
 

@@ -4495,6 +4495,7 @@ func (s *Service) fetchTorznab(ctx context.Context, idx config.IndexerConfig, op
 
 	endpoint := strings.TrimSpace(idx.URL)
 	if endpoint == "" {
+		breaker.ReleaseProbe(idx.Name, probe)
 		return nil, fmt.Errorf("indexer %s missing url", idx.Name)
 	}
 
@@ -4507,6 +4508,7 @@ func (s *Service) fetchTorznab(ctx context.Context, idx config.IndexerConfig, op
 
 	u, err := url.Parse(endpoint)
 	if err != nil {
+		breaker.ReleaseProbe(idx.Name, probe)
 		return nil, fmt.Errorf("parse indexer url: %w", err)
 	}
 
@@ -4550,6 +4552,7 @@ func (s *Service) fetchTorznab(ctx context.Context, idx config.IndexerConfig, op
 	searchURL := &url.URL{Scheme: u.Scheme, Host: u.Host, Path: path.Join(u.Path, "")}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, searchURL.String(), nil)
 	if err != nil {
+		breaker.ReleaseProbe(idx.Name, probe)
 		return nil, err
 	}
 	httpheaders.SetIndexerSearchHeaders(req, idx.UserAgent)
@@ -4572,10 +4575,10 @@ func (s *Service) fetchTorznab(ctx context.Context, idx config.IndexerConfig, op
 		}
 		return nil, fmt.Errorf("torznab %s search failed: %s: %s", idx.Name, resp.Status, strings.TrimSpace(string(body)))
 	}
-	breaker.RecordSuccess(idx.Name, probe)
 
 	buf, err := io.ReadAll(resp.Body)
 	if err != nil {
+		breaker.ReleaseProbe(idx.Name, probe)
 		return nil, err
 	}
 
@@ -4590,9 +4593,17 @@ func (s *Service) fetchTorznab(ctx context.Context, idx config.IndexerConfig, op
 	// HTTP 200 <error> document; surface its message instead of a generic
 	// "not an RSS feed" error.
 	if msg, isErr := ParseNewznabError(sanitized); isErr {
+		if NewznabErrorTripsBreaker(sanitized) {
+			until := breaker.RecordRateLimit(idx.Name, 0)
+			log.Printf("[provider-breaker] opened provider=%q after newznab API error until=%s", idx.Name, until.Format(time.RFC3339))
+		} else {
+			breaker.ReleaseProbe(idx.Name, probe)
+		}
 		log.Printf("[indexer/newznab] %s returned an API error: %s", idx.Name, msg)
 		return nil, fmt.Errorf("indexer %s returned an error: %s", idx.Name, msg)
 	}
+
+	breaker.RecordSuccess(idx.Name, probe)
 
 	var feed rssFeed
 	if err := xml.Unmarshal(sanitized, &feed); err != nil {

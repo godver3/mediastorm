@@ -692,6 +692,7 @@ func TestDatabaseExportSectionsCoverDurableTables(t *testing.T) {
 		"remoteMediaItems",
 		"libraryAccessPolicies",
 		"recordings",
+		"recordingRules",
 		"qualityPresets",
 	} {
 		if !required[want] {
@@ -759,6 +760,7 @@ func TestDatabaseExportSectionsCoverDurableTables(t *testing.T) {
 		LibraryAccessPolicies: map[string]models.LibraryAccessPolicy{
 			"lib1": {LibraryID: "lib1", AccessMode: models.LibraryAccessModeAll},
 		},
+		RecordingRules: []models.RecordingRule{{ID: "rr1", UserID: "default", MatchType: models.RecordingRuleMatchTitle, Pattern: "x", CreatedAt: now, UpdatedAt: now}},
 		Recordings: []models.Recording{{
 			ID: "rec1", UserID: "default", Type: models.RecordingTypeEPG,
 			Status: models.RecordingStatusPending, ChannelID: "ch", ChannelName: "Ch",

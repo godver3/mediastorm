@@ -157,6 +157,7 @@ func (m *manager) buildPool(generation uint64, providers []nntppool.UsenetProvid
 	slog.Info("Creating NNTP connection pool in background", "provider_count", len(providers))
 	pool, err := m.newPool(nntppool.Config{
 		Providers:      providers,
+		MaxRetries:     maxRetriesFor(len(providers)),
 		Logger:         slog.Default(),
 		DelayType:      nntppool.DelayTypeFixed,
 		RetryDelay:     10 * time.Millisecond,
@@ -240,6 +241,7 @@ func (m *manager) buildPoolLocked() error {
 	slog.Info("Creating NNTP connection pool", "provider_count", len(m.providers))
 	pool, err := m.newPool(nntppool.Config{
 		Providers:      m.providers,
+		MaxRetries:     maxRetriesFor(len(m.providers)),
 		Logger:         slog.Default(),
 		DelayType:      nntppool.DelayTypeFixed,
 		RetryDelay:     10 * time.Millisecond,
@@ -252,4 +254,15 @@ func (m *manager) buildPoolLocked() error {
 	m.pool = pool
 	slog.Info("NNTP connection pool created successfully")
 	return nil
+}
+
+// maxRetriesFor bounds per-article attempts (which includes provider failover
+// on 430) so that every configured provider can be tried. The nntppool default
+// is 4, which would skip the 5th and later providers.
+func maxRetriesFor(providerCount int) uint {
+	const defaultRetries = 4
+	if n := providerCount + 2; n > defaultRetries {
+		return uint(n)
+	}
+	return defaultRetries
 }

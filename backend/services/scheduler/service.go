@@ -10,6 +10,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -136,15 +137,28 @@ func (s *Service) Start(ctx context.Context) error {
 		return nil
 	}
 
-	s.ctx, s.cancel = context.WithCancel(ctx)
+	loopCtx, cancel := context.WithCancel(ctx)
+	s.ctx, s.cancel = loopCtx, cancel
 	s.running = true
 
 	// Start the main scheduler loop
 	s.wg.Add(1)
-	go s.schedulerLoop()
+	go s.schedulerLoop(loopCtx)
 
 	log.Println("[scheduler] Scheduler service started")
 	return nil
+}
+
+// taskContext returns the scheduler's context for task execution. It is never
+// nil: before Start it is context.Background() (manual runs), after Stop it is
+// the cancelled scheduler context.
+func (s *Service) taskContext() context.Context {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.ctx == nil {
+		return context.Background()
+	}
+	return s.ctx
 }
 
 // Stop gracefully stops the scheduler
@@ -154,7 +168,8 @@ func (s *Service) Stop(ctx context.Context) error {
 	cancel := s.cancel
 	if wasRunning {
 		s.running = false
-		s.ctx = nil
+		// Keep s.ctx: it is cancelled below, so tasks still holding or later
+		// reading it see a cancelled context instead of a nil one.
 		s.cancel = nil
 	}
 	s.mu.Unlock()
@@ -183,7 +198,7 @@ func (s *Service) Stop(ctx context.Context) error {
 }
 
 // schedulerLoop is the main background loop that checks for tasks to run
-func (s *Service) schedulerLoop() {
+func (s *Service) schedulerLoop(ctx context.Context) {
 	defer s.wg.Done()
 
 	// Load check interval from settings
@@ -206,7 +221,7 @@ func (s *Service) schedulerLoop() {
 
 	for {
 		select {
-		case <-s.ctx.Done():
+		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			s.checkAndRunTasks()
@@ -330,6 +345,15 @@ func (s *Service) executeTask(task config.ScheduledTask) {
 		delete(s.taskRunning, task.ID)
 		s.taskMu.Unlock()
 	}()
+	// A panicking task must not take down the whole process. Log it, record the
+	// task as failed and let the deferred cleanup above free the running slot so
+	// it reschedules normally.
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[scheduler] Task %s (%s) panicked: %v\n%s", task.Name, task.Type, r, debug.Stack())
+			s.updateTaskStatus(task.ID, fmt.Errorf("task panicked: %v", r), SyncResult{})
+		}
+	}()
 
 	log.Printf("[scheduler] Executing task: %s (%s)", task.Name, task.Type)
 
@@ -423,64 +447,62 @@ func (s *Service) enrichSyncedWatchlistArtwork(task config.ScheduledTask) {
 
 // updateTaskStatus updates a task's status in the settings file
 func (s *Service) updateTaskStatus(taskID string, err error, result SyncResult) {
-	settings, loadErr := s.configManager.Load()
-	if loadErr != nil {
-		log.Printf("[scheduler] Failed to load settings to update task status: %v", loadErr)
-		return
+	// Dry-run details live in their own file; write them outside the settings
+	// lock held by Update below.
+	if result.DryRun {
+		details := &config.DryRunDetails{ToAdd: result.ToAdd, ToRemove: result.ToRemove}
+		if saveErr := s.configManager.SaveDryRunDetails(taskID, details); saveErr != nil {
+			log.Printf("[scheduler] Failed to store dry run details for %s: %v", taskID, saveErr)
+		}
+	} else {
+		_ = s.configManager.SaveDryRunDetails(taskID, nil)
 	}
 
 	now := time.Now().UTC()
-	for i := range settings.ScheduledTasks.Tasks {
-		if settings.ScheduledTasks.Tasks[i].ID == taskID {
-			settings.ScheduledTasks.Tasks[i].LastRunAt = &now
-			settings.ScheduledTasks.Tasks[i].ItemsImported = result.Count
-			if err == nil && !result.DryRun && result.Config != nil {
-				if settings.ScheduledTasks.Tasks[i].Config == nil {
-					settings.ScheduledTasks.Tasks[i].Config = make(map[string]string)
+	// Load+mutate+save under the manager's lock so concurrent writers (other
+	// tasks, token refreshes) cannot lose this update or be overwritten by it.
+	if updErr := s.configManager.Update(func(settings *config.Settings) error {
+		for i := range settings.ScheduledTasks.Tasks {
+			if settings.ScheduledTasks.Tasks[i].ID == taskID {
+				settings.ScheduledTasks.Tasks[i].LastRunAt = &now
+				settings.ScheduledTasks.Tasks[i].ItemsImported = result.Count
+				if err == nil && !result.DryRun && result.Config != nil {
+					if settings.ScheduledTasks.Tasks[i].Config == nil {
+						settings.ScheduledTasks.Tasks[i].Config = make(map[string]string)
+					}
+					for key, value := range result.Config {
+						settings.ScheduledTasks.Tasks[i].Config[key] = value
+					}
 				}
-				for key, value := range result.Config {
-					settings.ScheduledTasks.Tasks[i].Config[key] = value
-				}
-			}
 
-			// Store dry run details if this was a dry run
-			if result.DryRun {
-				details := &config.DryRunDetails{ToAdd: result.ToAdd, ToRemove: result.ToRemove}
-				if saveErr := s.configManager.SaveDryRunDetails(taskID, details); saveErr != nil {
-					log.Printf("[scheduler] Failed to store dry run details for %s: %v", taskID, saveErr)
-				}
-				settings.ScheduledTasks.Tasks[i].HasDryRunDetails = true
-			} else {
-				// Clear dry run details for real runs
-				_ = s.configManager.SaveDryRunDetails(taskID, nil)
-				settings.ScheduledTasks.Tasks[i].HasDryRunDetails = false
-			}
+				settings.ScheduledTasks.Tasks[i].HasDryRunDetails = result.DryRun
 
-			if err != nil {
-				settings.ScheduledTasks.Tasks[i].LastStatus = config.ScheduledTaskStatusError
-				settings.ScheduledTasks.Tasks[i].LastError = err.Error()
-				log.Printf("[scheduler] Task %s failed: %v", taskID, err)
-			} else {
-				settings.ScheduledTasks.Tasks[i].LastStatus = config.ScheduledTaskStatusSuccess
-				settings.ScheduledTasks.Tasks[i].LastError = ""
-				if result.DryRun {
-					log.Printf("[scheduler] Task %s dry run completed: %d items to add, %d items to remove", taskID, len(result.ToAdd), len(result.ToRemove))
+				if err != nil {
+					settings.ScheduledTasks.Tasks[i].LastStatus = config.ScheduledTaskStatusError
+					settings.ScheduledTasks.Tasks[i].LastError = err.Error()
+					log.Printf("[scheduler] Task %s failed: %v", taskID, err)
 				} else {
-					log.Printf("[scheduler] Task %s completed successfully, processed %d changes", taskID, result.Count)
+					settings.ScheduledTasks.Tasks[i].LastStatus = config.ScheduledTaskStatusSuccess
+					settings.ScheduledTasks.Tasks[i].LastError = ""
+					if result.DryRun {
+						log.Printf("[scheduler] Task %s dry run completed: %d items to add, %d items to remove", taskID, len(result.ToAdd), len(result.ToRemove))
+					} else {
+						log.Printf("[scheduler] Task %s completed successfully, processed %d changes", taskID, result.Count)
+					}
 				}
-			}
 
-			// Auto-disable "once" tasks after completion
-			if settings.ScheduledTasks.Tasks[i].Frequency == config.ScheduledTaskFrequencyOnce {
-				settings.ScheduledTasks.Tasks[i].Enabled = false
-				log.Printf("[scheduler] Auto-disabled one-time task %s", taskID)
+				// Auto-disable "once" tasks after completion
+				if settings.ScheduledTasks.Tasks[i].Frequency == config.ScheduledTaskFrequencyOnce {
+					settings.ScheduledTasks.Tasks[i].Enabled = false
+					log.Printf("[scheduler] Auto-disabled one-time task %s", taskID)
+				}
+				break
 			}
-			break
 		}
-	}
 
-	if saveErr := s.configManager.Save(settings); saveErr != nil {
-		log.Printf("[scheduler] Failed to save task status: %v", saveErr)
+		return nil
+	}); updErr != nil {
+		log.Printf("[scheduler] Failed to save task status: %v", updErr)
 	}
 }
 
@@ -4222,8 +4244,8 @@ func (s *Service) SetQualityPresetSyncer(syncer QualityPresetSyncer) {
 func (s *Service) executeQualityPresetSync(task config.ScheduledTask) (SyncResult, error) {
 	s.mu.RLock()
 	syncer := s.qualityPresets
-	ctx := s.ctx
 	s.mu.RUnlock()
+	ctx := s.taskContext()
 	if syncer == nil {
 		return SyncResult{}, errors.New("quality preset service not configured")
 	}
@@ -4252,7 +4274,7 @@ func (s *Service) executePrewarm(task config.ScheduledTask) (SyncResult, error) 
 		return SyncResult{}, errors.New("prewarm service not configured")
 	}
 
-	prewarmResult, err := s.prewarmService.RunOnceWithConfig(s.ctx, task.Config)
+	prewarmResult, err := s.prewarmService.RunOnceWithConfig(s.taskContext(), task.Config)
 	if err != nil {
 		return SyncResult{}, fmt.Errorf("prewarm failed: %w", err)
 	}

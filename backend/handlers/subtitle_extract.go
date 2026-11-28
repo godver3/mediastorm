@@ -40,8 +40,51 @@ type SubtitleExtractSession struct {
 	mu             sync.Mutex
 	extractionDone bool
 	extractionErr  error
-	FirstCueTime   float64 // Time of first extracted cue (for subtitle sync)
-	firstCueParsed bool    // Internal: tracks if we've parsed the first cue
+	FirstCueTime   float64        // Time of first extracted cue (for subtitle sync)
+	firstCueParsed bool           // Internal: tracks if we've parsed the first cue
+	batch          *subtitleBatch // Non-nil for pre-extraction sessions sharing one ffmpeg/output dir
+}
+
+// subtitleBatch is the shared state of a pre-extraction batch: one ffmpeg process
+// and one output directory serve several sessions, so they are only torn down
+// when the last session of the batch is cleaned up.
+type subtitleBatch struct {
+	mu     sync.Mutex
+	refs   int
+	closed bool
+	dir    string
+	cancel context.CancelFunc
+}
+
+// setCancel stores the ffmpeg cancel func; if the batch was already torn down it cancels immediately.
+func (b *subtitleBatch) setCancel(cancel context.CancelFunc) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.closed {
+		cancel()
+		return
+	}
+	b.cancel = cancel
+}
+
+// release drops one session reference and tears the batch down when none remain.
+func (b *subtitleBatch) release() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.closed {
+		return
+	}
+	b.refs--
+	if b.refs > 0 {
+		return
+	}
+	b.closed = true
+	if b.cancel != nil {
+		b.cancel()
+	}
+	if b.dir != "" {
+		os.RemoveAll(b.dir)
+	}
 }
 
 // SubtitleExtractManager manages subtitle extraction sessions
@@ -312,6 +355,12 @@ func (m *SubtitleExtractManager) cleanupSessionLocked(session *SubtitleExtractSe
 	session.mu.Lock()
 	defer session.mu.Unlock()
 
+	if session.batch != nil {
+		b := session.batch
+		session.batch = nil
+		b.release()
+		return
+	}
 	if session.cancel != nil {
 		session.cancel()
 	}
@@ -1379,6 +1428,8 @@ func (m *SubtitleExtractManager) StartPreExtraction(ctx context.Context, path st
 		return sessions
 	}
 
+	batch := &subtitleBatch{refs: len(textTracks), dir: outputDir}
+
 	// Create session objects for each track (all share the same output dir)
 	for _, track := range textTracks {
 		vttPath := filepath.Join(outputDir, fmt.Sprintf("subtitles_%d.vtt", track.Index))
@@ -1389,10 +1440,13 @@ func (m *SubtitleExtractManager) StartPreExtraction(ctx context.Context, path st
 			Path:          path,
 			SubtitleTrack: track.Index,
 			StartOffset:   startOffset,
+			OutputFormat:  "vtt",
 			OutputDir:     outputDir,
 			VTTPath:       vttPath,
+			OutputPath:    vttPath,
 			CreatedAt:     time.Now(),
 			LastAccess:    time.Now(),
+			batch:         batch,
 		}
 
 		m.mu.Lock()
@@ -1422,6 +1476,9 @@ func (m *SubtitleExtractManager) startBatchExtraction(path, outputDir string, tr
 	for _, session := range sessions {
 		session.mu.Lock()
 		session.cancel = cancel
+		if session.batch != nil {
+			session.batch.setCancel(cancel)
+		}
 		session.mu.Unlock()
 	}
 

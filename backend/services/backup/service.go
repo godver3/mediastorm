@@ -125,6 +125,15 @@ func (s *Service) CreateBackup(backupType BackupType) (*BackupInfo, error) {
 	timestamp := time.Now().UTC().Format("20060102-150405")
 	filename := fmt.Sprintf("mediastorm_backup_%s.zip", timestamp)
 	backupPath := filepath.Join(s.backupDir, filename)
+	// Timestamps have one-second resolution; never overwrite an existing backup
+	// (e.g. a pre_restore backup taken in the same second as a scheduled one).
+	for n := 2; ; n++ {
+		if _, statErr := os.Stat(backupPath); os.IsNotExist(statErr) {
+			break
+		}
+		filename = fmt.Sprintf("mediastorm_backup_%s-%d.zip", timestamp, n)
+		backupPath = filepath.Join(s.backupDir, filename)
+	}
 
 	// Create temporary file first
 	tmpPath := backupPath + ".tmp"
@@ -688,6 +697,9 @@ func (s *Service) CleanupOldBackups() (int, error) {
 	if retention.RetentionDays > 0 {
 		cutoff := time.Now().UTC().AddDate(0, 0, -retention.RetentionDays)
 		for _, backup := range backups {
+			if backup.Type == BackupTypePreRestore {
+				continue // safety net taken before a restore; only deleted manually
+			}
 			if backup.CreatedAt.Before(cutoff) {
 				toDelete[backup.Filename] = true
 			}
@@ -695,10 +707,16 @@ func (s *Service) CleanupOldBackups() (int, error) {
 	}
 
 	// Apply retention count rule (keep newest N backups)
-	if retention.RetentionCount > 0 && len(backups) > retention.RetentionCount {
-		// Backups are already sorted newest first
-		for i := retention.RetentionCount; i < len(backups); i++ {
-			toDelete[backups[i].Filename] = true
+	// Backups are sorted newest first; pre_restore backups are never pruned and
+	// do not count against the limit.
+	kept := 0
+	for _, backup := range backups {
+		if backup.Type == BackupTypePreRestore {
+			continue
+		}
+		kept++
+		if retention.RetentionCount > 0 && kept > retention.RetentionCount {
+			toDelete[backup.Filename] = true
 		}
 	}
 
@@ -858,6 +876,7 @@ type databaseExport struct {
 	RemoteMediaLibraries     []models.RemoteMediaLibrary            `json:"remoteMediaLibraries,omitempty"`
 	RemoteMediaItems         []models.RemoteMediaItem               `json:"remoteMediaItems,omitempty"`
 	LibraryAccessPolicies    map[string]models.LibraryAccessPolicy  `json:"libraryAccessPolicies,omitempty"`
+	RecordingRules           []models.RecordingRule                 `json:"recordingRules,omitempty"`
 	Recordings               []models.Recording                     `json:"recordings,omitempty"`
 	NumbersStationProgress   []models.NumbersStationProgress        `json:"numbersStationProgress"`
 	QualityPresets           []*qualityprofiles.Preset              `json:"qualityPresets,omitempty"`
@@ -896,6 +915,7 @@ var databaseExportSections = []string{
 	"remoteMediaLibraries",
 	"remoteMediaItems",
 	"libraryAccessPolicies",
+	"recordingRules",
 	"recordings",
 	"numbersStationProgress",
 	"qualityPresets",
@@ -1102,6 +1122,12 @@ func (s *Service) exportDatabaseBytes() ([]byte, error) {
 		return nil, fmt.Errorf("export library access policies: %w", err)
 	}
 	export.LibraryAccessPolicies = libraryAccess
+
+	recordingRules, err := s.store.RecordingRules().ListRules(ctx, "", true, false)
+	if err != nil {
+		return nil, fmt.Errorf("export recording rules: %w", err)
+	}
+	export.RecordingRules = recordingRules
 
 	recordings, err := s.store.Recordings().List(ctx, models.RecordingListFilter{IncludeAll: true})
 	if err != nil {
@@ -1410,8 +1436,22 @@ func (s *Service) importDatabaseBytes(data []byte) error {
 				return fmt.Errorf("restore library access policy %s: %w", libraryID, err)
 			}
 		}
+		// Rules first: recordings reference them via rule_id (FK). Backups made
+		// before rules were exported have no recordingRules section; their
+		// recordings fall back to rule_id "" below so the restore still succeeds.
+		restoredRules := make(map[string]bool, len(export.RecordingRules))
+		for i := range export.RecordingRules {
+			rule := export.RecordingRules[i]
+			if err := tx.RecordingRules().CreateRule(ctx, &rule); err != nil {
+				return fmt.Errorf("restore recording rule %s: %w", rule.ID, err)
+			}
+			restoredRules[rule.ID] = true
+		}
 		for i := range export.Recordings {
 			recording := export.Recordings[i]
+			if recording.RuleID != "" && !restoredRules[recording.RuleID] {
+				recording.RuleID = "" // rule missing from the backup (old export)
+			}
 			if err := tx.Recordings().Create(ctx, &recording); err != nil {
 				return fmt.Errorf("restore recording %s: %w", recording.ID, err)
 			}

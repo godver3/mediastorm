@@ -262,8 +262,14 @@ func (c *Client) EnsureValidToken(account *config.SimklAccount, configManager *c
 		fresh.RefreshToken = token.RefreshToken // non-rotating, but harmless to store
 	}
 	fresh.ExpiresAt = expiryFrom(token.ExpiresIn)
-	settings.Simkl.UpdateAccount(*fresh)
-	if err := configManager.Save(settings); err != nil {
+	if err := configManager.Update(func(cur *config.Settings) error {
+		a := cur.Simkl.GetAccountByID(account.ID)
+		if a == nil {
+			return fmt.Errorf("simkl account %s no longer exists", account.ID)
+		}
+		a.AccessToken, a.RefreshToken, a.ExpiresAt = fresh.AccessToken, fresh.RefreshToken, fresh.ExpiresAt
+		return nil
+	}); err != nil {
 		return "", fmt.Errorf("save refreshed simkl token: %w", err)
 	}
 	copyTokens(account, fresh)

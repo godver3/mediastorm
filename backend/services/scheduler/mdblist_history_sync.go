@@ -103,12 +103,7 @@ func (s *Service) syncMDBListHistoryToLocal(task config.ScheduledTask, account *
 		task.ID, account.ID, profileID, mode, since, lastRun, task.LastStatus, dryRun)
 
 	// Keep both pagination and retries bounded, and stop promptly on shutdown.
-	s.mu.RLock()
-	parent := s.ctx
-	s.mu.RUnlock()
-	if parent == nil {
-		parent = context.Background()
-	}
+	parent := s.taskContext()
 	ctx, cancel := context.WithTimeout(parent, 30*time.Minute)
 	defer cancel()
 	metadataCache := make(map[string]*models.SeriesDetails)
@@ -774,12 +769,7 @@ func (s *Service) syncLocalHistoryToMDBList(task config.ScheduledTask, account *
 // fetchMDBListRemoteHistoryKeys pages through the full MDBList watched history
 // (no since filter) and returns the keys used to match local history.
 func (s *Service) fetchMDBListRemoteHistoryKeys(task config.ScheduledTask, account *config.MDBListAccount) (map[string]bool, error) {
-	s.mu.RLock()
-	parent := s.ctx
-	s.mu.RUnlock()
-	if parent == nil {
-		parent = context.Background()
-	}
+	parent := s.taskContext()
 	ctx, cancel := context.WithTimeout(parent, 30*time.Minute)
 	defer cancel()
 	httpClient := &http.Client{Timeout: 30 * time.Second}

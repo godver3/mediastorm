@@ -29,7 +29,7 @@ type takenAirings []takenAiring
 // done, so a rule does not record an airing twice: a series recording
 // created after a single recording of the current episode (Jellyfin's
 // record, then record series) would otherwise record it in parallel.
-func (s *Service) takenAirings(ctx context.Context, profileID string) takenAirings {
+func (s *Service) takenAirings(ctx context.Context, profileID string) (takenAirings, error) {
 	// Rules only schedule airings from about now on: older recordings can't
 	// collide, and the profile's whole history would grow every pass.
 	since := time.Now().Add(-takenAiringsLookback)
@@ -43,7 +43,7 @@ func (s *Service) takenAirings(ctx context.Context, profileID string) takenAirin
 	})
 	if err != nil {
 		log.Printf("[recordings] list recordings for rule airings failed profile=%s: %v", profileID, err)
-		return nil
+		return nil, err
 	}
 	taken := make(takenAirings, 0, len(recs))
 	for _, rec := range recs {
@@ -53,7 +53,7 @@ func (s *Service) takenAirings(ctx context.Context, profileID string) takenAirin
 		}
 		taken.add(rec)
 	}
-	return taken
+	return taken, nil
 }
 
 func (t *takenAirings) add(rec models.Recording) {

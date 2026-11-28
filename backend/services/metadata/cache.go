@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 )
 
@@ -133,4 +134,68 @@ func (c *fileCache) clear() error {
 		}
 	}
 	return nil
+}
+
+const (
+	cacheSweepInterval = 24 * time.Hour
+	// jitteredTTL adds up to 6h to the base TTL; never sweep younger files.
+	cacheSweepGrace = 6 * time.Hour
+	// Orphaned temp files from interrupted writes.
+	cacheSweepTmpAge = time.Hour
+)
+
+// sweepExpired removes cache files older than the maximum possible TTL (base
+// TTL plus jitter) and stale temp files. Entries are otherwise only removed
+// when re-read. Non-recursive and best effort; returns the number removed.
+func (c *fileCache) sweepExpired() int {
+	if c == nil || c.dir == "" {
+		return 0
+	}
+	entries, err := os.ReadDir(c.dir)
+	if err != nil {
+		return 0
+	}
+	removed := 0
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		maxAge := c.ttl + cacheSweepGrace
+		if !strings.HasSuffix(name, ".json") {
+			if !strings.Contains(name, ".json.tmp-") {
+				continue
+			}
+			maxAge = cacheSweepTmpAge
+		}
+		info, err := entry.Info()
+		if err != nil || time.Since(info.ModTime()) <= maxAge {
+			continue
+		}
+		if os.Remove(filepath.Join(c.dir, name)) == nil {
+			removed++
+		}
+	}
+	return removed
+}
+
+// runCacheSweeper sweeps the given caches once now and then every
+// cacheSweepInterval until stop is closed.
+func runCacheSweeper(stop <-chan struct{}, caches ...*fileCache) {
+	sweep := func() {
+		for _, c := range caches {
+			c.sweepExpired()
+		}
+	}
+	sweep()
+	ticker := time.NewTicker(cacheSweepInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			sweep()
+		case <-stop:
+			return
+		}
+	}
 }

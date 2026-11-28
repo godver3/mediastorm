@@ -325,22 +325,34 @@ func (u *liveUpstream) pump(body io.ReadCloser) (received bool, err error) {
 
 func (u *liveUpstream) broadcast(chunk []byte) {
 	u.mu.Lock()
-	defer u.mu.Unlock()
 	u.prime = append(u.prime, chunk)
 	u.primeBytes += len(chunk)
 	for u.primeBytes-len(u.prime[0]) >= liveUpstreamPrimeBytes {
 		u.primeBytes -= len(u.prime[0])
 		u.prime = u.prime[1:]
 	}
+	lagged := false
 	for sub := range u.subscribers {
 		select {
 		case sub.chunks <- chunk:
 		default:
+			lagged = true
 			// A reader that cannot keep up with realtime would otherwise stall everyone else.
 			// Dropping it ends that FFmpeg; its supervisor restarts and re-subscribes.
 			delete(u.subscribers, sub)
 			sub.fail(errLiveUpstreamLag)
 		}
+	}
+	// Same "last viewer left" path as release(): a dropped laggard that was the final
+	// subscriber must not leave the provider connection open with nobody watching.
+	last := len(u.subscribers) == 0 && !u.ended && lagged
+	if last {
+		u.ended = true
+	}
+	u.mu.Unlock()
+	if last {
+		log.Printf("[live-upstream] %s: last viewer dropped (lag), closing upstream", u.label)
+		u.finish(io.EOF)
 	}
 }
 

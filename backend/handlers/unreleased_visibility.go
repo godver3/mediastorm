@@ -200,11 +200,7 @@ func enrichSearchMovieReleaseVisibility(ctx context.Context, results []models.Se
 			break
 		}
 		title := &results[indexes[i]].Title
-		if strings.TrimSpace(items[i].Status) != "" {
-			title.Status = items[i].Status
-		}
-		title.Theatrical = items[i].Theatrical
-		title.HomeRelease = items[i].HomeRelease
+		applyMovieReleaseLookup(title, items[i])
 	}
 }
 
@@ -250,11 +246,7 @@ func enrichTrendingMovieReleaseVisibility(ctx context.Context, items []models.Tr
 			break
 		}
 		title := &items[indexes[i]].Title
-		if strings.TrimSpace(results[i].Status) != "" {
-			title.Status = results[i].Status
-		}
-		title.Theatrical = results[i].Theatrical
-		title.HomeRelease = results[i].HomeRelease
+		applyMovieReleaseLookup(title, results[i])
 	}
 }
 
@@ -321,4 +313,20 @@ func titleMovieReleasedForUnreleasedVisibility(title models.Title) bool {
 
 func currentYear() int {
 	return time.Now().Year()
+}
+
+// applyMovieReleaseLookup copies a release lookup onto a title only when the
+// lookup returned real data, so a failed or negative lookup (status "unknown",
+// no windows) never wipes data the title already carried.
+func applyMovieReleaseLookup(title *models.Title, item models.BatchMovieReleasesItem) {
+	status := strings.TrimSpace(item.Status)
+	if status != "" && !strings.EqualFold(status, models.MovieReleaseStatusUnknown) {
+		title.Status = item.Status
+	}
+	if item.Theatrical != nil {
+		title.Theatrical = item.Theatrical
+	}
+	if item.HomeRelease != nil {
+		title.HomeRelease = item.HomeRelease
+	}
 }

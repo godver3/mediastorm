@@ -601,8 +601,10 @@ func (mvf *MetadataVirtualFile) Seek(offset int64, whence int) (int64, error) {
 	}
 
 	// Check if the new position is outside our current reader's range
-	if mvf.readerInitialized && (abs < mvf.currentRangeStart || abs > mvf.currentRangeEnd) {
-		// Position is outside current range, need to recreate reader
+	// The reader's actual position always equals mvf.position, so any move
+	// away from it (even inside the range) needs a fresh reader.
+	if mvf.readerInitialized && (abs != mvf.position || abs < mvf.currentRangeStart || abs > mvf.currentRangeEnd) {
+		// Position differs from the reader's, need to recreate reader
 		mvf.closeCurrentReader()
 	}
 

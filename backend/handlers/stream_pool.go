@@ -921,6 +921,13 @@ func (p *streamPool) getOrCreateInternal(waitCtx context.Context, path string, r
 
 	// Register slot, evicting the least recently used idle slot if at capacity.
 	p.mu.Lock()
+	if p.files == nil {
+		// Pool was closed while the upstream connection was being opened.
+		p.mu.Unlock()
+		cancel()
+		_ = resp.Close()
+		return nil, 0, fmt.Errorf("stream pool closed")
+	}
 	if existing, existingReaderID := p.findSlotLocked(path, reqPos, acquire); existing != nil {
 		p.mu.Unlock()
 		cancel()

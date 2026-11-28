@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -34,10 +35,21 @@ var (
 	ErrStartRequired       = errors.New("start time is required")
 	ErrEndRequired         = errors.New("end time is required")
 	ErrInvalidTimeWindow   = errors.New("end time must be after start time")
+	ErrPaddingOutOfRange   = errors.New("padding must be between 0 and 3600 seconds")
+	ErrRecordingTooLong    = errors.New("recording window must not exceed 24 hours")
 	ErrCannotDeleteActive  = errors.New("cannot delete active recording")
 )
 
 const pollInterval = 15 * time.Second
+
+const (
+	// maxRecordingPaddingSeconds matches the cap applied to recording rules.
+	maxRecordingPaddingSeconds = 3600
+	// maxRecordingWindow bounds a directly created recording's start-to-stop span.
+	maxRecordingWindow = 24 * time.Hour
+	// maxOutputFilenameBytes keeps recording file names well under the 255-byte limit.
+	maxOutputFilenameBytes = 200
+)
 
 // pausedRuleError marks airings parked by a paused rule (the datastore sets
 // it and revives such rows when the rule resumes).
@@ -322,6 +334,12 @@ func (s *Service) createRecording(kind models.RecordingType, userID, channelID, 
 	}
 	if !endAt.After(startAt) {
 		return models.Recording{}, ErrInvalidTimeWindow
+	}
+	if endAt.Sub(startAt) > maxRecordingWindow {
+		return models.Recording{}, ErrRecordingTooLong
+	}
+	if padBefore > maxRecordingPaddingSeconds || padAfter > maxRecordingPaddingSeconds {
+		return models.Recording{}, ErrPaddingOutOfRange
 	}
 	now := time.Now().UTC()
 	recording := models.Recording{
@@ -692,7 +710,12 @@ func (s *Service) expandEnabledRules() {
 		now := time.Now().UTC()
 		horizonEnd := now.Add(7 * 24 * time.Hour)
 		schedules := s.epg.GetScheduleMultiple(epgIDs, now.Add(-offset), horizonEnd.Add(-offset))
-		taken := s.takenAirings(ctx, profileID)
+		taken, err := s.takenAirings(ctx, profileID)
+		if err != nil {
+			// Without the list every airing looks free and would be scheduled twice.
+			log.Printf("[recordings] skipping rule expansion for profile=%s: %v", profileID, err)
+			continue
+		}
 		for _, rule := range profileRules {
 			var compiled *regexp.Regexp
 			if rule.MatchType == models.RecordingRuleMatchRegex {
@@ -1450,20 +1473,44 @@ var invalidFilenameChars = regexp.MustCompile(`[<>:"/\\|?*\x00-\x1f]+`)
 func (s *Service) buildOutputPath(recording models.Recording) string {
 	datePart := recording.StartAt.In(time.Local).Format("2006-01-02 1504")
 	titlePart := sanitizeFilename(recording.Title)
-	channelPart := sanitizeFilename(recording.ChannelName)
+	channelPart := truncateBytes(sanitizeFilename(recording.ChannelName), 60)
 	if titlePart == "" {
 		titlePart = channelPart
 	}
-	filename := fmt.Sprintf("%s - %s - %s.ts", channelPart, datePart, titlePart)
+	// A short ID suffix keeps two recordings of the same channel/minute/title from sharing
+	// (and truncating) one file.
+	suffix := recording.ID
+	if len(suffix) > 8 {
+		suffix = suffix[:8]
+	}
+	if suffix != "" {
+		suffix = " [" + suffix + "]"
+	}
+	var head, tail string
 	if recording.Type == models.RecordingTypeTimeBlock {
-		endPart := recording.EndAt.In(time.Local).Format("1504")
-		if titlePart != "" && titlePart != channelPart {
-			filename = fmt.Sprintf("%s - %s-%s - %s.ts", channelPart, datePart, endPart, titlePart)
-		} else {
-			filename = fmt.Sprintf("%s - %s-%s.ts", channelPart, datePart, endPart)
+		head = fmt.Sprintf("%s - %s-%s", channelPart, datePart, recording.EndAt.In(time.Local).Format("1504"))
+	} else {
+		head = fmt.Sprintf("%s - %s", channelPart, datePart)
+	}
+	if titlePart != "" && (recording.Type != models.RecordingTypeTimeBlock || titlePart != channelPart) {
+		budget := maxOutputFilenameBytes - len(head) - len(" - ") - len(suffix) - len(".ts")
+		if budget > 0 {
+			tail = " - " + truncateBytes(titlePart, budget)
 		}
 	}
+	filename := head + tail + suffix + ".ts"
 	return filepath.Join(s.outputDir, recording.UserID, filename)
+}
+
+// truncateBytes shortens value to at most n bytes without splitting a UTF-8 character.
+func truncateBytes(value string, n int) string {
+	if len(value) <= n {
+		return value
+	}
+	for n > 0 && !utf8.RuneStart(value[n]) {
+		n--
+	}
+	return strings.TrimRight(value[:n], ". ")
 }
 
 func sanitizeFilename(value string) string {

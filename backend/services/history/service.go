@@ -2724,7 +2724,7 @@ func (s *Service) saveLocked() error {
 		return fmt.Errorf("encode history: %w", err)
 	}
 
-	if err := os.WriteFile(s.path, data, 0o644); err != nil {
+	if err := writeFileAtomic(s.path, data, 0o644); err != nil {
 		return fmt.Errorf("write history: %w", err)
 	}
 
@@ -5020,7 +5020,7 @@ func (s *Service) saveWatchHistoryLocked() error {
 		return fmt.Errorf("encode watch history: %w", err)
 	}
 
-	if err := os.WriteFile(s.watchHistPath, data, 0o644); err != nil {
+	if err := writeFileAtomic(s.watchHistPath, data, 0o644); err != nil {
 		return fmt.Errorf("write watch history: %w", err)
 	}
 
@@ -6451,7 +6451,7 @@ func (s *Service) savePlaybackProgressLockedContext(ctx context.Context) error {
 		return fmt.Errorf("encode playback progress: %w", err)
 	}
 
-	if err := os.WriteFile(s.playbackProgressPath, data, 0o644); err != nil {
+	if err := writeFileAtomic(s.playbackProgressPath, data, 0o644); err != nil {
 		return fmt.Errorf("write playback progress: %w", err)
 	}
 
@@ -7879,4 +7879,37 @@ func inferSeriesID(itemID string) string {
 		return ""
 	}
 	return itemID[:idx]
+}
+
+// writeFileAtomic writes data to a temp file in the same directory and renames
+// it over path, so a crash mid-write never leaves a truncated JSON file.
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := os.Chmod(tmp, perm); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }

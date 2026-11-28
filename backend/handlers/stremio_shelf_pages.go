@@ -76,9 +76,38 @@ func (h *MetadataHandler) loadStremioShelfCatalogPrefix(ctx context.Context, raw
 		snapshot := entry
 		snapshot.metas = append([]stremioMeta(nil), entry.metas...)
 		h.stremioCatalogCache[key] = snapshot
+		pruneStremioCatalogCache(h.stremioCatalogCache, stremioShelfCatalogCacheMax)
 	}
 	h.stremioCatalogMu.Unlock()
 	return entry, nil
+}
+
+// stremioShelfCatalogCacheMax caps cached catalogs so unique manifest/catalog
+// keys cannot grow the in-memory cache without bound.
+const stremioShelfCatalogCacheMax = 256
+
+// pruneStremioCatalogCache drops expired entries first, then the oldest ones,
+// until at most max remain. Callers hold stremioCatalogMu.
+func pruneStremioCatalogCache(cache map[string]stremioShelfCatalogCacheEntry, max int) {
+	if len(cache) <= max {
+		return
+	}
+	for k, e := range cache {
+		if time.Since(e.fetched) >= stremioShelfCatalogTTL {
+			delete(cache, k)
+		}
+	}
+	for len(cache) > max {
+		var oldestKey string
+		var oldest time.Time
+		first := true
+		for k, e := range cache {
+			if first || e.fetched.Before(oldest) {
+				oldestKey, oldest, first = k, e.fetched, false
+			}
+		}
+		delete(cache, oldestKey)
+	}
 }
 
 func newStremioShelfCatalogEntry(baseURL string, catalog stremioCatalogDef) stremioShelfCatalogCacheEntry {
