@@ -36,6 +36,8 @@ const (
 )
 
 var (
+	resolution4320Pattern   = regexp.MustCompile(`(?i)(^|[^a-z0-9])(?:4320[pi]?|8k)([^a-z0-9]|$)`)
+	resolution1440Pattern   = regexp.MustCompile(`(?i)(^|[^a-z0-9])1440[pi]?([^a-z0-9]|$)`)
 	resolution2160Pattern   = regexp.MustCompile(`(?i)(^|[^a-z0-9])(?:2160[pi]?|4k|uhd)([^a-z0-9]|$)`)
 	resolution1080Pattern   = regexp.MustCompile(`(?i)(^|[^a-z0-9])1080[pi]?([^a-z0-9]|$)`)
 	resolution720Pattern    = regexp.MustCompile(`(?i)(^|[^a-z0-9])720[pi]?([^a-z0-9]|$)`)
@@ -222,12 +224,18 @@ func resolutionToNumeric(res string) int {
 	switch res {
 	case "480p":
 		return 480
+	case "576p":
+		return 576
 	case "720p":
 		return 720
 	case "1080p":
 		return 1080
+	case "1440p":
+		return 1440
 	case "2160p", "4k", "uhd":
 		return 2160
+	case "4320p", "8k":
+		return 4320
 	default:
 		return 0
 	}
@@ -238,12 +246,18 @@ func resolutionToString(res int) string {
 	switch res {
 	case 480:
 		return "480p"
+	case 576:
+		return "576p"
 	case 720:
 		return "720p"
 	case 1080:
 		return "1080p"
+	case 1440:
+		return "1440p"
 	case 2160:
 		return "2160p"
+	case 4320:
+		return "4320p"
 	default:
 		return ""
 	}
@@ -252,9 +266,17 @@ func resolutionToString(res int) string {
 // extractResolutionFromTitle extracts resolution from the title using simple string matching.
 // This is a fallback for when parsett doesn't detect resolution (e.g., underscore-separated titles).
 func extractResolutionFromTitle(title string) int {
-	// Check for 4K/UHD (highest priority)
+	// Check for 8K (highest priority)
+	if resolution4320Pattern.MatchString(title) {
+		return 4320
+	}
+	// Check for 4K/UHD
 	if resolution2160Pattern.MatchString(title) {
 		return 2160
+	}
+	// Check for 1440p
+	if resolution1440Pattern.MatchString(title) {
+		return 1440
 	}
 	// Check for 1080p
 	if resolution1080Pattern.MatchString(title) {
