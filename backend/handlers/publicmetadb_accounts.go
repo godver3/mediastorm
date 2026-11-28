@@ -59,11 +59,6 @@ func (h *AdminUIHandler) CreatePublicMetaDBAccount(w http.ResponseWriter, r *htt
 		http.Error(w, "PublicMetaDB API key could not be validated", 400)
 		return
 	}
-	settings, err := h.configManager.Load()
-	if err != nil {
-		http.Error(w, "Settings unavailable", 500)
-		return
-	}
 	name := strings.TrimSpace(body.Name)
 	if name == "" {
 		name = "PublicMetaDB"
@@ -72,9 +67,11 @@ func (h *AdminUIHandler) CreatePublicMetaDBAccount(w http.ResponseWriter, r *htt
 	if isAdmin, ownerID, _, _ := h.getPageRoleInfo(r); !isAdmin {
 		account.OwnerAccountID = ownerID
 	}
-	settings.PublicMetaDB.Accounts = append(settings.PublicMetaDB.Accounts, account)
-	if err := h.configManager.Save(settings); err != nil {
-		http.Error(w, "Failed to save settings", 500)
+	if !updateSettingsOr(h.configManager, func(settings *config.Settings) error {
+		settings.PublicMetaDB.Accounts = append(settings.PublicMetaDB.Accounts, account)
+		return nil
+	}, func(error) { http.Error(w, "Settings unavailable", 500) },
+		func(error) { http.Error(w, "Failed to save settings", 500) }) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -84,24 +81,21 @@ func (h *AdminUIHandler) CreatePublicMetaDBAccount(w http.ResponseWriter, r *htt
 
 func (h *AdminUIHandler) DeletePublicMetaDBAccount(w http.ResponseWriter, r *http.Request) {
 	id := mux.Vars(r)["accountID"]
-	settings, err := h.configManager.Load()
-	if err != nil {
-		http.Error(w, "Settings unavailable", 500)
-		return
-	}
-	if h.publicMetaDBAccount(r, settings, id) == nil {
-		http.Error(w, "Account not found", 404)
-		return
-	}
-	accounts := settings.PublicMetaDB.Accounts[:0]
-	for _, account := range settings.PublicMetaDB.Accounts {
-		if account.ID != id {
-			accounts = append(accounts, account)
+	if !updateSettingsOr(h.configManager, func(settings *config.Settings) error {
+		if h.publicMetaDBAccount(r, *settings, id) == nil {
+			http.Error(w, "Account not found", 404)
+			return errSettingsUpdateAborted
 		}
-	}
-	settings.PublicMetaDB.Accounts = accounts
-	if err := h.configManager.Save(settings); err != nil {
-		http.Error(w, "Failed to save settings", 500)
+		accounts := settings.PublicMetaDB.Accounts[:0]
+		for _, account := range settings.PublicMetaDB.Accounts {
+			if account.ID != id {
+				accounts = append(accounts, account)
+			}
+		}
+		settings.PublicMetaDB.Accounts = accounts
+		return nil
+	}, func(error) { http.Error(w, "Settings unavailable", 500) },
+		func(error) { http.Error(w, "Failed to save settings", 500) }) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

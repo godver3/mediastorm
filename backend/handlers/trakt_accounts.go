@@ -144,12 +144,6 @@ func (h *TraktAccountsHandler) CreateAccount(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	settings, err := h.configManager.Load()
-	if err != nil {
-		jsonError(w, "Failed to load settings: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
 		name = "Trakt Account"
@@ -171,10 +165,10 @@ func (h *TraktAccountsHandler) CreateAccount(w http.ResponseWriter, r *http.Requ
 		ClientSecret:   strings.TrimSpace(req.ClientSecret),
 	}
 
-	settings.Trakt.Accounts = append(settings.Trakt.Accounts, newAccount)
-
-	if err := h.configManager.Save(settings); err != nil {
-		jsonError(w, "Failed to save settings: "+err.Error(), http.StatusInternalServerError)
+	if !updateSettings(w, h.configManager, "Failed to save settings: ", func(settings *config.Settings) error {
+		settings.Trakt.Accounts = append(settings.Trakt.Accounts, newAccount)
+		return nil
+	}) {
 		return
 	}
 
@@ -254,38 +248,33 @@ func (h *TraktAccountsHandler) UpdateAccount(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	settings, err := h.configManager.Load()
-	if err != nil {
-		jsonError(w, "Failed to load settings: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
+	if !updateSettings(w, h.configManager, "Failed to save settings: ", func(settings *config.Settings) error {
 
-	account := settings.Trakt.GetAccountByID(accountID)
-	if account == nil {
-		jsonError(w, "Account not found", http.StatusNotFound)
-		return
-	}
-	if !requireTraktAccountAccess(w, r, account) {
-		return
-	}
+		account := settings.Trakt.GetAccountByID(accountID)
+		if account == nil {
+			jsonError(w, "Account not found", http.StatusNotFound)
+			return errSettingsUpdateAborted
+		}
+		if !requireTraktAccountAccess(w, r, account) {
+			return errSettingsUpdateAborted
+		}
 
-	if req.Name != nil {
-		account.Name = strings.TrimSpace(*req.Name)
-	}
-	if req.ClientID != nil {
-		account.ClientID = strings.TrimSpace(*req.ClientID)
-	}
-	if req.ClientSecret != nil {
-		account.ClientSecret = strings.TrimSpace(*req.ClientSecret)
-	}
-	if req.ScrobblingEnabled != nil {
-		account.ScrobblingEnabled = *req.ScrobblingEnabled
-	}
+		if req.Name != nil {
+			account.Name = strings.TrimSpace(*req.Name)
+		}
+		if req.ClientID != nil {
+			account.ClientID = strings.TrimSpace(*req.ClientID)
+		}
+		if req.ClientSecret != nil {
+			account.ClientSecret = strings.TrimSpace(*req.ClientSecret)
+		}
+		if req.ScrobblingEnabled != nil {
+			account.ScrobblingEnabled = *req.ScrobblingEnabled
+		}
 
-	settings.Trakt.UpdateAccount(*account)
-
-	if err := h.configManager.Save(settings); err != nil {
-		jsonError(w, "Failed to save settings: "+err.Error(), http.StatusInternalServerError)
+		settings.Trakt.UpdateAccount(*account)
+		return nil
+	}) {
 		return
 	}
 
@@ -304,31 +293,26 @@ func (h *TraktAccountsHandler) DeleteAccount(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	settings, err := h.configManager.Load()
-	if err != nil {
-		jsonError(w, "Failed to load settings: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
+	if !updateSettings(w, h.configManager, "Failed to save settings: ", func(settings *config.Settings) error {
 
-	account := settings.Trakt.GetAccountByID(accountID)
-	if account == nil || !requireTraktAccountAccess(w, r, account) {
-		return
-	}
-	if !settings.Trakt.RemoveAccount(accountID) {
-		jsonError(w, "Account not found", http.StatusNotFound)
-		return
-	}
-
-	// Clear any profile associations with this account
-	allUsers := h.usersService.List()
-	for _, user := range allUsers {
-		if user.TraktAccountID == accountID {
-			h.usersService.ClearTraktAccountID(user.ID)
+		account := settings.Trakt.GetAccountByID(accountID)
+		if account == nil || !requireTraktAccountAccess(w, r, account) {
+			return errSettingsUpdateAborted
 		}
-	}
+		if !settings.Trakt.RemoveAccount(accountID) {
+			jsonError(w, "Account not found", http.StatusNotFound)
+			return errSettingsUpdateAborted
+		}
 
-	if err := h.configManager.Save(settings); err != nil {
-		jsonError(w, "Failed to save settings: "+err.Error(), http.StatusInternalServerError)
+		// Clear any profile associations with this account
+		allUsers := h.usersService.List()
+		for _, user := range allUsers {
+			if user.TraktAccountID == accountID {
+				h.usersService.ClearTraktAccountID(user.ID)
+			}
+		}
+		return nil
+	}) {
 		return
 	}
 
@@ -431,24 +415,27 @@ func (h *TraktAccountsHandler) CheckAuth(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Token received, update account
-	account.AccessToken = token.AccessToken
-	account.RefreshToken = token.RefreshToken
-	account.ExpiresAt = token.CreatedAt + int64(token.ExpiresIn)
-
 	// Get user profile
-	profile, err := tc.GetUserProfile(token.AccessToken)
-	if err == nil && profile != nil {
-		account.Username = profile.Username
-		if account.Name == "" || account.Name == "Trakt Account" {
-			account.Name = profile.Username
+	profile, profileErr := tc.GetUserProfile(token.AccessToken)
+
+	// Token received, update the stored account (re-read under the save
+	// lock so changes made while polling are kept).
+	if !updateSettings(w, h.configManager, "Failed to save token: ", func(cur *config.Settings) error {
+		if fresh := cur.Trakt.GetAccountByID(accountID); fresh != nil {
+			account = fresh
 		}
-	}
-
-	settings.Trakt.UpdateAccount(*account)
-
-	if err := h.configManager.Save(settings); err != nil {
-		jsonError(w, "Failed to save token: "+err.Error(), http.StatusInternalServerError)
+		account.AccessToken = token.AccessToken
+		account.RefreshToken = token.RefreshToken
+		account.ExpiresAt = token.CreatedAt + int64(token.ExpiresIn)
+		if profileErr == nil && profile != nil {
+			account.Username = profile.Username
+			if account.Name == "" || account.Name == "Trakt Account" {
+				account.Name = profile.Username
+			}
+		}
+		cur.Trakt.UpdateAccount(*account)
+		return nil
+	}) {
 		return
 	}
 
@@ -467,30 +454,25 @@ func (h *TraktAccountsHandler) Disconnect(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	settings, err := h.configManager.Load()
-	if err != nil {
-		jsonError(w, "Failed to load settings: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
+	if !updateSettings(w, h.configManager, "Failed to save settings: ", func(settings *config.Settings) error {
 
-	account := settings.Trakt.GetAccountByID(accountID)
-	if account == nil {
-		jsonError(w, "Account not found", http.StatusNotFound)
-		return
-	}
-	if !requireTraktAccountAccess(w, r, account) {
-		return
-	}
+		account := settings.Trakt.GetAccountByID(accountID)
+		if account == nil {
+			jsonError(w, "Account not found", http.StatusNotFound)
+			return errSettingsUpdateAborted
+		}
+		if !requireTraktAccountAccess(w, r, account) {
+			return errSettingsUpdateAborted
+		}
 
-	account.AccessToken = ""
-	account.RefreshToken = ""
-	account.ExpiresAt = 0
-	account.Username = ""
+		account.AccessToken = ""
+		account.RefreshToken = ""
+		account.ExpiresAt = 0
+		account.Username = ""
 
-	settings.Trakt.UpdateAccount(*account)
-
-	if err := h.configManager.Save(settings); err != nil {
-		jsonError(w, "Failed to save settings: "+err.Error(), http.StatusInternalServerError)
+		settings.Trakt.UpdateAccount(*account)
+		return nil
+	}) {
 		return
 	}
 
@@ -518,26 +500,21 @@ func (h *TraktAccountsHandler) SetScrobbling(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	settings, err := h.configManager.Load()
-	if err != nil {
-		jsonError(w, "Failed to load settings: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
+	if !updateSettings(w, h.configManager, "Failed to save settings: ", func(settings *config.Settings) error {
 
-	account := settings.Trakt.GetAccountByID(accountID)
-	if account == nil {
-		jsonError(w, "Account not found", http.StatusNotFound)
-		return
-	}
-	if !requireTraktAccountAccess(w, r, account) {
-		return
-	}
+		account := settings.Trakt.GetAccountByID(accountID)
+		if account == nil {
+			jsonError(w, "Account not found", http.StatusNotFound)
+			return errSettingsUpdateAborted
+		}
+		if !requireTraktAccountAccess(w, r, account) {
+			return errSettingsUpdateAborted
+		}
 
-	account.ScrobblingEnabled = req.Enabled
-	settings.Trakt.UpdateAccount(*account)
-
-	if err := h.configManager.Save(settings); err != nil {
-		jsonError(w, "Failed to save settings: "+err.Error(), http.StatusInternalServerError)
+		account.ScrobblingEnabled = req.Enabled
+		settings.Trakt.UpdateAccount(*account)
+		return nil
+	}) {
 		return
 	}
 

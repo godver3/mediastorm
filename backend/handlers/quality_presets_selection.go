@@ -344,60 +344,60 @@ func (h *QualityPresetsHandler) Selection(w http.ResponseWriter, r *http.Request
 			return
 		}
 	}
-	settings, err := h.Config.Load()
-	if err != nil {
-		writeJSONError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if in.MoviePreset != nil {
-		settings.QualityPresets.MoviePreset = strings.TrimSpace(*in.MoviePreset)
-	}
-	if in.SeriesPreset != nil {
-		settings.QualityPresets.SeriesPreset = strings.TrimSpace(*in.SeriesPreset)
-	}
-	if in.AllowRequestOverride != nil {
-		settings.QualityPresets.AllowRequestOverride = *in.AllowRequestOverride
-	}
-	if in.Enabled != nil {
-		settings.QualityPresets.Disabled = !*in.Enabled
-	}
-	if in.PreferLibraryCopies != nil {
-		settings.QualityPresets.IgnoreLibraryCopies = !*in.PreferLibraryCopies
-	}
-	if in.PickerPresets != nil {
-		settings.QualityPresets.PickerPresets = picker
-	}
-	if in.AnimeMoviePreset != nil {
-		settings.QualityPresets.AnimeMoviePreset = strings.TrimSpace(*in.AnimeMoviePreset)
-	}
-	if in.AnimeSeriesPreset != nil {
-		settings.QualityPresets.AnimeSeriesPreset = strings.TrimSpace(*in.AnimeSeriesPreset)
-	}
-	// Only offered presets can be hidden by default; a shorter offer drops
-	// the rest.
-	if in.HiddenByDefault != nil || in.PickerPresets != nil {
-		want := settings.QualityPresets.HiddenByDefault
-		if in.HiddenByDefault != nil {
-			want = *in.HiddenByDefault
+	var settings config.Settings
+	if err := h.Config.Update(func(cur *config.Settings) error {
+		settings = *cur
+		if in.MoviePreset != nil {
+			settings.QualityPresets.MoviePreset = strings.TrimSpace(*in.MoviePreset)
 		}
-		var hidden []string
-		seen := map[string]bool{}
-		for _, id := range want {
-			id = strings.TrimSpace(id)
-			if strings.EqualFold(id, config.QualityPresetSimple) {
-				id = config.QualityPresetSimple
-			}
-			if id != "" && !seen[id] && settings.QualityPresets.OffersInPicker(id) {
-				seen[id] = true
-				hidden = append(hidden, id)
-			}
+		if in.SeriesPreset != nil {
+			settings.QualityPresets.SeriesPreset = strings.TrimSpace(*in.SeriesPreset)
 		}
-		settings.QualityPresets.HiddenByDefault = hidden
-	}
-	if in.AnimeOnlyInPickers != nil {
-		settings.QualityPresets.AnimeOnlyInPickers = *in.AnimeOnlyInPickers
-	}
-	if err := h.Config.Save(settings); err != nil {
+		if in.AllowRequestOverride != nil {
+			settings.QualityPresets.AllowRequestOverride = *in.AllowRequestOverride
+		}
+		if in.Enabled != nil {
+			settings.QualityPresets.Disabled = !*in.Enabled
+		}
+		if in.PreferLibraryCopies != nil {
+			settings.QualityPresets.IgnoreLibraryCopies = !*in.PreferLibraryCopies
+		}
+		if in.PickerPresets != nil {
+			settings.QualityPresets.PickerPresets = picker
+		}
+		if in.AnimeMoviePreset != nil {
+			settings.QualityPresets.AnimeMoviePreset = strings.TrimSpace(*in.AnimeMoviePreset)
+		}
+		if in.AnimeSeriesPreset != nil {
+			settings.QualityPresets.AnimeSeriesPreset = strings.TrimSpace(*in.AnimeSeriesPreset)
+		}
+		// Only offered presets can be hidden by default; a shorter offer drops
+		// the rest.
+		if in.HiddenByDefault != nil || in.PickerPresets != nil {
+			want := settings.QualityPresets.HiddenByDefault
+			if in.HiddenByDefault != nil {
+				want = *in.HiddenByDefault
+			}
+			var hidden []string
+			seen := map[string]bool{}
+			for _, id := range want {
+				id = strings.TrimSpace(id)
+				if strings.EqualFold(id, config.QualityPresetSimple) {
+					id = config.QualityPresetSimple
+				}
+				if id != "" && !seen[id] && settings.QualityPresets.OffersInPicker(id) {
+					seen[id] = true
+					hidden = append(hidden, id)
+				}
+			}
+			settings.QualityPresets.HiddenByDefault = hidden
+		}
+		if in.AnimeOnlyInPickers != nil {
+			settings.QualityPresets.AnimeOnlyInPickers = *in.AnimeOnlyInPickers
+		}
+		*cur = settings
+		return nil
+	}); err != nil {
 		writeJSONError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

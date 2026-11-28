@@ -1333,12 +1333,6 @@ func (h *AccountUIHandler) CreateTraktAccount(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	settings, err := h.configManager.Load()
-	if err != nil {
-		http.Error(w, "Failed to load settings", http.StatusInternalServerError)
-		return
-	}
-
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
 		name = "Trakt Account"
@@ -1352,10 +1346,15 @@ func (h *AccountUIHandler) CreateTraktAccount(w http.ResponseWriter, r *http.Req
 		ClientSecret:   strings.TrimSpace(req.ClientSecret),
 	}
 
-	settings.Trakt.Accounts = append(settings.Trakt.Accounts, newAccount)
+	if !updateSettingsOr(h.configManager, func(settings *config.Settings) error {
+		settings.Trakt.Accounts = append(settings.Trakt.Accounts, newAccount)
 
-	if err := h.configManager.Save(settings); err != nil {
+		return nil
+	}, func(err error) {
+		http.Error(w, "Failed to load settings", http.StatusInternalServerError)
+	}, func(err error) {
 		http.Error(w, "Failed to save settings", http.StatusInternalServerError)
+	}) {
 		return
 	}
 
@@ -1381,45 +1380,45 @@ func (h *AccountUIHandler) DeleteTraktAccount(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	settings, err := h.configManager.Load()
-	if err != nil {
-		http.Error(w, "Failed to load settings", http.StatusInternalServerError)
-		return
-	}
+	if !updateSettingsOr(h.configManager, func(settings *config.Settings) error {
 
-	// Find the account and verify ownership
-	var found bool
-	for i, acc := range settings.Trakt.Accounts {
-		if acc.ID == accountID {
-			// Verify ownership (only owner or master can delete)
-			loginAccount, ok := h.accountsService.Get(session.AccountID)
-			if !ok || (!loginAccount.IsMaster && acc.OwnerAccountID != session.AccountID) {
-				http.Error(w, "Not authorized to delete this account", http.StatusForbidden)
-				return
+		// Find the account and verify ownership
+		var found bool
+		for i, acc := range settings.Trakt.Accounts {
+			if acc.ID == accountID {
+				// Verify ownership (only owner or master can delete)
+				loginAccount, ok := h.accountsService.Get(session.AccountID)
+				if !ok || (!loginAccount.IsMaster && acc.OwnerAccountID != session.AccountID) {
+					http.Error(w, "Not authorized to delete this account", http.StatusForbidden)
+					return errSettingsUpdateAborted
+				}
+
+				// Remove the account
+				settings.Trakt.Accounts = append(settings.Trakt.Accounts[:i], settings.Trakt.Accounts[i+1:]...)
+				found = true
+				break
 			}
-
-			// Remove the account
-			settings.Trakt.Accounts = append(settings.Trakt.Accounts[:i], settings.Trakt.Accounts[i+1:]...)
-			found = true
-			break
 		}
-	}
 
-	if !found {
-		http.Error(w, "Account not found", http.StatusNotFound)
-		return
-	}
-
-	// Clear any profile associations with this account
-	allUsers := h.usersService.List()
-	for _, user := range allUsers {
-		if user.TraktAccountID == accountID {
-			h.usersService.ClearTraktAccountID(user.ID)
+		if !found {
+			http.Error(w, "Account not found", http.StatusNotFound)
+			return errSettingsUpdateAborted
 		}
-	}
 
-	if err := h.configManager.Save(settings); err != nil {
+		// Clear any profile associations with this account
+		allUsers := h.usersService.List()
+		for _, user := range allUsers {
+			if user.TraktAccountID == accountID {
+				h.usersService.ClearTraktAccountID(user.ID)
+			}
+		}
+
+		return nil
+	}, func(err error) {
+		http.Error(w, "Failed to load settings", http.StatusInternalServerError)
+	}, func(err error) {
 		http.Error(w, "Failed to save settings", http.StatusInternalServerError)
+	}) {
 		return
 	}
 
@@ -1537,24 +1536,31 @@ func (h *AccountUIHandler) CheckTraktAuth(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Token received, update account
-	account.AccessToken = token.AccessToken
-	account.RefreshToken = token.RefreshToken
-	account.ExpiresAt = token.CreatedAt + int64(token.ExpiresIn)
-
 	// Get user profile
-	profile, err := tc.GetUserProfile(token.AccessToken)
-	if err == nil && profile != nil {
-		account.Username = profile.Username
-		if account.Name == "" || account.Name == "Trakt Account" {
-			account.Name = profile.Username
+	profile, profileErr := tc.GetUserProfile(token.AccessToken)
+
+	// Token received, update the stored account (re-read under the save lock).
+	if !updateSettingsOr(h.configManager, func(cur *config.Settings) error {
+		if fresh := cur.Trakt.GetAccountByID(accountID); fresh != nil {
+			account = fresh
 		}
-	}
+		account.AccessToken = token.AccessToken
+		account.RefreshToken = token.RefreshToken
+		account.ExpiresAt = token.CreatedAt + int64(token.ExpiresIn)
+		if profileErr == nil && profile != nil {
+			account.Username = profile.Username
+			if account.Name == "" || account.Name == "Trakt Account" {
+				account.Name = profile.Username
+			}
+		}
+		cur.Trakt.UpdateAccount(*account)
 
-	settings.Trakt.UpdateAccount(*account)
-
-	if err := h.configManager.Save(settings); err != nil {
+		return nil
+	}, func(err error) {
+		http.Error(w, "Failed to load settings", http.StatusInternalServerError)
+	}, func(err error) {
 		http.Error(w, "Failed to save token", http.StatusInternalServerError)
+	}) {
 		return
 	}
 
@@ -1578,34 +1584,34 @@ func (h *AccountUIHandler) DisconnectTraktAccount(w http.ResponseWriter, r *http
 		return
 	}
 
-	settings, err := h.configManager.Load()
-	if err != nil {
+	if !updateSettingsOr(h.configManager, func(settings *config.Settings) error {
+
+		account := settings.Trakt.GetAccountByID(accountID)
+		if account == nil {
+			http.Error(w, "Account not found", http.StatusNotFound)
+			return errSettingsUpdateAborted
+		}
+
+		// Verify ownership
+		loginAccount, ok := h.accountsService.Get(session.AccountID)
+		if !ok || (!loginAccount.IsMaster && account.OwnerAccountID != session.AccountID) {
+			http.Error(w, "Not authorized", http.StatusForbidden)
+			return errSettingsUpdateAborted
+		}
+
+		account.AccessToken = ""
+		account.RefreshToken = ""
+		account.ExpiresAt = 0
+		account.Username = ""
+
+		settings.Trakt.UpdateAccount(*account)
+
+		return nil
+	}, func(err error) {
 		http.Error(w, "Failed to load settings", http.StatusInternalServerError)
-		return
-	}
-
-	account := settings.Trakt.GetAccountByID(accountID)
-	if account == nil {
-		http.Error(w, "Account not found", http.StatusNotFound)
-		return
-	}
-
-	// Verify ownership
-	loginAccount, ok := h.accountsService.Get(session.AccountID)
-	if !ok || (!loginAccount.IsMaster && account.OwnerAccountID != session.AccountID) {
-		http.Error(w, "Not authorized", http.StatusForbidden)
-		return
-	}
-
-	account.AccessToken = ""
-	account.RefreshToken = ""
-	account.ExpiresAt = 0
-	account.Username = ""
-
-	settings.Trakt.UpdateAccount(*account)
-
-	if err := h.configManager.Save(settings); err != nil {
+	}, func(err error) {
 		http.Error(w, "Failed to save settings", http.StatusInternalServerError)
+	}) {
 		return
 	}
 

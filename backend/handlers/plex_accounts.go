@@ -142,12 +142,6 @@ func (h *PlexAccountsHandler) CreateAccount(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	settings, err := h.configManager.Load()
-	if err != nil {
-		jsonError(w, "Failed to load settings: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
 		name = "Plex Account"
@@ -159,10 +153,10 @@ func (h *PlexAccountsHandler) CreateAccount(w http.ResponseWriter, r *http.Reque
 		OwnerAccountID: session.AccountID,
 	}
 
-	settings.Plex.Accounts = append(settings.Plex.Accounts, newAccount)
-
-	if err := h.configManager.Save(settings); err != nil {
-		jsonError(w, "Failed to save settings: "+err.Error(), http.StatusInternalServerError)
+	if !updateSettings(w, h.configManager, "Failed to save settings: ", func(settings *config.Settings) error {
+		settings.Plex.Accounts = append(settings.Plex.Accounts, newAccount)
+		return nil
+	}) {
 		return
 	}
 
@@ -192,40 +186,36 @@ func (h *PlexAccountsHandler) DeleteAccount(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	settings, err := h.configManager.Load()
-	if err != nil {
-		jsonError(w, "Failed to load settings: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
+	if !updateSettings(w, h.configManager, "Failed to save settings: ", func(settings *config.Settings) error {
 
-	// Verify ownership
-	account := settings.Plex.GetAccountByID(accountID)
-	if account == nil {
-		jsonError(w, "Account not found", http.StatusNotFound)
-		return
-	}
-
-	loginAccount, ok := h.accountsService.Get(session.AccountID)
-	if !ok || (!loginAccount.IsMaster && account.OwnerAccountID != session.AccountID) {
-		jsonError(w, "Not authorized to delete this account", http.StatusForbidden)
-		return
-	}
-
-	if !settings.Plex.RemoveAccount(accountID) {
-		jsonError(w, "Account not found", http.StatusNotFound)
-		return
-	}
-
-	// Clear any profile associations with this account
-	allUsers := h.usersService.List()
-	for _, user := range allUsers {
-		if user.PlexAccountID == accountID {
-			h.usersService.ClearPlexAccountID(user.ID)
+		// Verify ownership
+		account := settings.Plex.GetAccountByID(accountID)
+		if account == nil {
+			jsonError(w, "Account not found", http.StatusNotFound)
+			return errSettingsUpdateAborted
 		}
-	}
 
-	if err := h.configManager.Save(settings); err != nil {
-		jsonError(w, "Failed to save settings: "+err.Error(), http.StatusInternalServerError)
+		loginAccount, ok := h.accountsService.Get(session.AccountID)
+		if !ok || (!loginAccount.IsMaster && account.OwnerAccountID != session.AccountID) {
+			jsonError(w, "Not authorized to delete this account", http.StatusForbidden)
+			return errSettingsUpdateAborted
+		}
+
+		if !settings.Plex.RemoveAccount(accountID) {
+			jsonError(w, "Account not found", http.StatusNotFound)
+			return errSettingsUpdateAborted
+		}
+
+		// Clear any profile associations with this account
+		allUsers := h.usersService.List()
+		for _, user := range allUsers {
+			if user.PlexAccountID == accountID {
+				h.usersService.ClearPlexAccountID(user.ID)
+			}
+		}
+
+		return nil
+	}) {
 		return
 	}
 
@@ -351,22 +341,26 @@ func (h *PlexAccountsHandler) CheckPIN(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Token received, update account
-	account.AuthToken = pinResp.AuthToken
-
 	// Get user info (username and ID for filtering watch history)
-	if userInfo, err := h.plexClient.GetUserInfo(pinResp.AuthToken); err == nil && userInfo != nil {
-		account.Username = userInfo.Username
-		account.UserID = userInfo.ID
-		if account.Name == "" || account.Name == "Plex Account" {
-			account.Name = userInfo.Username
+	userInfo, userInfoErr := h.plexClient.GetUserInfo(pinResp.AuthToken)
+
+	// Token received, update the stored account (re-read under the save
+	// lock so changes made while the PIN was checked are kept).
+	if !updateSettings(w, h.configManager, "Failed to save token: ", func(cur *config.Settings) error {
+		if fresh := cur.Plex.GetAccountByID(accountID); fresh != nil {
+			account = fresh
 		}
-	}
-
-	settings.Plex.UpdateAccount(*account)
-
-	if err := h.configManager.Save(settings); err != nil {
-		jsonError(w, "Failed to save token: "+err.Error(), http.StatusInternalServerError)
+		account.AuthToken = pinResp.AuthToken
+		if userInfoErr == nil && userInfo != nil {
+			account.Username = userInfo.Username
+			account.UserID = userInfo.ID
+			if account.Name == "" || account.Name == "Plex Account" {
+				account.Name = userInfo.Username
+			}
+		}
+		cur.Plex.UpdateAccount(*account)
+		return nil
+	}) {
 		return
 	}
 
@@ -391,31 +385,27 @@ func (h *PlexAccountsHandler) Disconnect(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	settings, err := h.configManager.Load()
-	if err != nil {
-		jsonError(w, "Failed to load settings: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
+	if !updateSettings(w, h.configManager, "Failed to save settings: ", func(settings *config.Settings) error {
 
-	account := settings.Plex.GetAccountByID(accountID)
-	if account == nil {
-		jsonError(w, "Account not found", http.StatusNotFound)
-		return
-	}
+		account := settings.Plex.GetAccountByID(accountID)
+		if account == nil {
+			jsonError(w, "Account not found", http.StatusNotFound)
+			return errSettingsUpdateAborted
+		}
 
-	// Verify ownership
-	loginAccount, ok := h.accountsService.Get(session.AccountID)
-	if !ok || (!loginAccount.IsMaster && account.OwnerAccountID != session.AccountID) {
-		jsonError(w, "Not authorized", http.StatusForbidden)
-		return
-	}
+		// Verify ownership
+		loginAccount, ok := h.accountsService.Get(session.AccountID)
+		if !ok || (!loginAccount.IsMaster && account.OwnerAccountID != session.AccountID) {
+			jsonError(w, "Not authorized", http.StatusForbidden)
+			return errSettingsUpdateAborted
+		}
 
-	account.AuthToken = ""
-	account.Username = ""
-	settings.Plex.UpdateAccount(*account)
+		account.AuthToken = ""
+		account.Username = ""
+		settings.Plex.UpdateAccount(*account)
 
-	if err := h.configManager.Save(settings); err != nil {
-		jsonError(w, "Failed to save settings: "+err.Error(), http.StatusInternalServerError)
+		return nil
+	}) {
 		return
 	}
 

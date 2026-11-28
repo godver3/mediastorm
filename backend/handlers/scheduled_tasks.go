@@ -442,24 +442,24 @@ func (h *ScheduledTasksHandler) CreateTask(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	settings, err := h.configManager.Load()
-	if err != nil {
+	if !updateSettingsOr(h.configManager, func(settings *config.Settings) error {
+
+		settings.ScheduledTasks.Tasks = append(settings.ScheduledTasks.Tasks, task)
+
+		return nil
+	}, func(err error) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": "Failed to load settings: " + err.Error(),
 		})
-		return
-	}
-
-	settings.ScheduledTasks.Tasks = append(settings.ScheduledTasks.Tasks, task)
-
-	if err := h.configManager.Save(settings); err != nil {
+	}, func(err error) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": "Failed to save settings: " + err.Error(),
 		})
+	}) {
 		return
 	}
 
@@ -506,80 +506,79 @@ func (h *ScheduledTasksHandler) UpdateTask(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	settings, err := h.configManager.Load()
-	if err != nil {
+	var updatedTask *config.ScheduledTask
+	if !updateSettingsOr(h.configManager, func(settings *config.Settings) error {
+		for i := range settings.ScheduledTasks.Tasks {
+			if settings.ScheduledTasks.Tasks[i].ID == taskID {
+				if !h.canAccessTask(r, settings.ScheduledTasks.Tasks[i]) {
+					writeTaskNotFound(w)
+					return errSettingsUpdateAborted
+				}
+				if req.Name != "" {
+					settings.ScheduledTasks.Tasks[i].Name = req.Name
+				}
+				if req.Frequency != "" {
+					settings.ScheduledTasks.Tasks[i].Frequency = req.Frequency
+				}
+				if req.Config != nil {
+					settings.ScheduledTasks.Tasks[i].Config = req.Config
+				}
+				if req.Enabled != nil {
+					settings.ScheduledTasks.Tasks[i].Enabled = *req.Enabled
+				}
+				updatedTask = &settings.ScheduledTasks.Tasks[i]
+				break
+			}
+		}
+
+		if updatedTask == nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": "Task not found",
+			})
+			return errSettingsUpdateAborted
+		}
+
+		if updatedTask.Type == config.ScheduledTaskTypePrewarm && updatedTask.Config == nil {
+			updatedTask.Config = map[string]string{}
+		}
+		if err := validateScheduledTaskFrequency(updatedTask.Type, updatedTask.Frequency); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": err.Error(),
+			})
+			return errSettingsUpdateAborted
+		}
+
+		if err := validateScheduledTaskConfig(updatedTask.Type, updatedTask.Config, h.usersService); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": err.Error(),
+			})
+			return errSettingsUpdateAborted
+		}
+		if !h.canAccessTask(r, *updatedTask) {
+			http.Error(w, "automation must belong to one of your profiles", http.StatusForbidden)
+			return errSettingsUpdateAborted
+		}
+
+		return nil
+	}, func(err error) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": "Failed to load settings: " + err.Error(),
 		})
-		return
-	}
-
-	var updatedTask *config.ScheduledTask
-	for i := range settings.ScheduledTasks.Tasks {
-		if settings.ScheduledTasks.Tasks[i].ID == taskID {
-			if !h.canAccessTask(r, settings.ScheduledTasks.Tasks[i]) {
-				writeTaskNotFound(w)
-				return
-			}
-			if req.Name != "" {
-				settings.ScheduledTasks.Tasks[i].Name = req.Name
-			}
-			if req.Frequency != "" {
-				settings.ScheduledTasks.Tasks[i].Frequency = req.Frequency
-			}
-			if req.Config != nil {
-				settings.ScheduledTasks.Tasks[i].Config = req.Config
-			}
-			if req.Enabled != nil {
-				settings.ScheduledTasks.Tasks[i].Enabled = *req.Enabled
-			}
-			updatedTask = &settings.ScheduledTasks.Tasks[i]
-			break
-		}
-	}
-
-	if updatedTask == nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"error": "Task not found",
-		})
-		return
-	}
-
-	if updatedTask.Type == config.ScheduledTaskTypePrewarm && updatedTask.Config == nil {
-		updatedTask.Config = map[string]string{}
-	}
-	if err := validateScheduledTaskFrequency(updatedTask.Type, updatedTask.Frequency); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"error": err.Error(),
-		})
-		return
-	}
-
-	if err := validateScheduledTaskConfig(updatedTask.Type, updatedTask.Config, h.usersService); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"error": err.Error(),
-		})
-		return
-	}
-	if !h.canAccessTask(r, *updatedTask) {
-		http.Error(w, "automation must belong to one of your profiles", http.StatusForbidden)
-		return
-	}
-
-	if err := h.configManager.Save(settings); err != nil {
+	}, func(err error) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": "Failed to save settings: " + err.Error(),
 		})
+	}) {
 		return
 	}
 
@@ -617,43 +616,43 @@ func (h *ScheduledTasksHandler) DeleteTask(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	settings, err := h.configManager.Load()
-	if err != nil {
+	if !updateSettingsOr(h.configManager, func(settings *config.Settings) error {
+
+		found := false
+		for i := range settings.ScheduledTasks.Tasks {
+			if settings.ScheduledTasks.Tasks[i].ID == taskID {
+				settings.ScheduledTasks.Tasks = append(
+					settings.ScheduledTasks.Tasks[:i],
+					settings.ScheduledTasks.Tasks[i+1:]...,
+				)
+				found = true
+				break
+			}
+		}
+
+		if !found {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": "Task not found",
+			})
+			return errSettingsUpdateAborted
+		}
+
+		return nil
+	}, func(err error) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": "Failed to load settings: " + err.Error(),
 		})
-		return
-	}
-
-	found := false
-	for i := range settings.ScheduledTasks.Tasks {
-		if settings.ScheduledTasks.Tasks[i].ID == taskID {
-			settings.ScheduledTasks.Tasks = append(
-				settings.ScheduledTasks.Tasks[:i],
-				settings.ScheduledTasks.Tasks[i+1:]...,
-			)
-			found = true
-			break
-		}
-	}
-
-	if !found {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"error": "Task not found",
-		})
-		return
-	}
-
-	if err := h.configManager.Save(settings); err != nil {
+	}, func(err error) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": "Failed to save settings: " + err.Error(),
 		})
+	}) {
 		return
 	}
 
@@ -737,40 +736,40 @@ func (h *ScheduledTasksHandler) ToggleTask(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	settings, err := h.configManager.Load()
-	if err != nil {
+	if !updateSettingsOr(h.configManager, func(settings *config.Settings) error {
+
+		var updatedTask *config.ScheduledTask
+		for i := range settings.ScheduledTasks.Tasks {
+			if settings.ScheduledTasks.Tasks[i].ID == taskID {
+				settings.ScheduledTasks.Tasks[i].Enabled = req.Enabled
+				updatedTask = &settings.ScheduledTasks.Tasks[i]
+				break
+			}
+		}
+
+		if updatedTask == nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": "Task not found",
+			})
+			return errSettingsUpdateAborted
+		}
+
+		return nil
+	}, func(err error) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": "Failed to load settings: " + err.Error(),
 		})
-		return
-	}
-
-	var updatedTask *config.ScheduledTask
-	for i := range settings.ScheduledTasks.Tasks {
-		if settings.ScheduledTasks.Tasks[i].ID == taskID {
-			settings.ScheduledTasks.Tasks[i].Enabled = req.Enabled
-			updatedTask = &settings.ScheduledTasks.Tasks[i]
-			break
-		}
-	}
-
-	if updatedTask == nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"error": "Task not found",
-		})
-		return
-	}
-
-	if err := h.configManager.Save(settings); err != nil {
+	}, func(err error) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": "Failed to save settings: " + err.Error(),
 		})
+	}) {
 		return
 	}
 
