@@ -1316,8 +1316,10 @@ func (s *PrequeueStore) DeleteAll() {
 	if s.useDB() {
 		// saveToDB only upserts, so rows must be removed explicitly or the
 		// cleared prequeue returns after a restart.
-		if err := s.repo.DeleteAll(context.Background()); err != nil {
-			log.Printf("[prequeue] Warning: failed to delete all entries from DB: %v", err)
+		if repo, ok := s.repo.(interface{ DeleteAll(context.Context) error }); ok {
+			if err := repo.DeleteAll(context.Background()); err != nil {
+				log.Printf("[prequeue] Warning: failed to delete all entries from DB: %v", err)
+			}
 		}
 	} else {
 		s.saveToDisk()

@@ -328,7 +328,6 @@ type PrequeueRepository interface {
 	Upsert(ctx context.Context, id, titleID, userID, status string, data []byte, expiresAt interface{}) error
 	Delete(ctx context.Context, id string) error
 	DeleteExpired(ctx context.Context) (int64, error)
-	DeleteAll(ctx context.Context) error
 	Count(ctx context.Context) (int64, error)
 }
 
