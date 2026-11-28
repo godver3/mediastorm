@@ -569,6 +569,27 @@ type DebridProviderSettings struct {
 	Enabled         bool              `json:"enabled"`
 	Config          map[string]string `json:"config,omitempty"` // Provider-specific settings (e.g., "autoClearQueue": "true" for Torbox)
 	AllowedProfiles []string          `json:"allowedProfiles,omitempty"`
+	// ProxyEnabled routes every request for this provider (API calls, link
+	// unrestricts, stream downloads, probes) through ProxyURL. It is all or
+	// nothing: there is no split between API and download traffic.
+	ProxyEnabled bool `json:"proxyEnabled,omitempty"`
+	// ProxyURL is an http://, https://, socks5:// or socks5h:// proxy URL,
+	// optionally with user:pass credentials.
+	ProxyURL string `json:"proxyUrl,omitempty"`
+}
+
+// EffectiveProxyURL returns the proxy this provider must use, or "" when the
+// proxy is off. An enabled proxy with no URL is an error rather than a silent
+// direct connection, so callers fail closed instead of leaking the server IP.
+func (p DebridProviderSettings) EffectiveProxyURL() (string, error) {
+	if !p.ProxyEnabled {
+		return "", nil
+	}
+	proxyURL := strings.TrimSpace(p.ProxyURL)
+	if proxyURL == "" {
+		return "", fmt.Errorf("debrid provider %q has its proxy enabled but no proxy URL set", p.Name)
+	}
+	return proxyURL, nil
 }
 
 // ImportSettings defines import/queue processing configuration

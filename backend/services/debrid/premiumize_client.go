@@ -15,8 +15,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	"novastream/internal/apiusage"
 )
 
 // PremiumizeClient handles API interactions with Premiumize.me.
@@ -34,7 +32,7 @@ var _ InstantAvailabilityBulkProvider = (*PremiumizeClient)(nil)
 func NewPremiumizeClient(apiKey string) *PremiumizeClient {
 	return &PremiumizeClient{
 		apiKey:     strings.TrimSpace(apiKey),
-		httpClient: apiusage.TrackClient(&http.Client{Timeout: 30 * time.Second}, "Premiumize", "API request"),
+		httpClient: newProviderAPIClient(nil, "Premiumize"),
 		baseURL:    "https://www.premiumize.me/api",
 	}
 }
@@ -498,4 +496,9 @@ func (c *PremiumizeClient) GetAccountInfo(ctx context.Context) (*AccountInfo, er
 		info.DaysRemaining = int(time.Until(expiresAt).Hours() / 24)
 	}
 	return info, nil
+}
+
+// useHTTPTransport installs rt (the provider's proxy) for all API calls.
+func (c *PremiumizeClient) useHTTPTransport(rt http.RoundTripper) {
+	c.httpClient = newProviderAPIClient(rt, "Premiumize")
 }

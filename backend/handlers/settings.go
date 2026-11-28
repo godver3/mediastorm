@@ -627,6 +627,7 @@ func redactSettings(s *config.Settings) {
 	// Debrid providers
 	for i := range s.Streaming.DebridProviders {
 		mask(&s.Streaming.DebridProviders[i].APIKey)
+		mask(&s.Streaming.DebridProviders[i].ProxyURL)
 	}
 
 	// SABnzbd
@@ -811,6 +812,7 @@ func preserveRedactedFields(incoming *config.Settings, existing *config.Settings
 	for i := range incoming.Streaming.DebridProviders {
 		if i < len(existing.Streaming.DebridProviders) {
 			restore(&incoming.Streaming.DebridProviders[i].APIKey, existing.Streaming.DebridProviders[i].APIKey)
+			restore(&incoming.Streaming.DebridProviders[i].ProxyURL, existing.Streaming.DebridProviders[i].ProxyURL)
 		}
 	}
 

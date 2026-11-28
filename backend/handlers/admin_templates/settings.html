@@ -7864,7 +7864,7 @@
                 break;
             case 'debridProviders':
                 endpoint = basePath + '/api/test/debrid-provider';
-                payload = { name: item.name, provider: item.provider, apiKey: item.apiKey };
+                payload = { name: item.name, provider: item.provider, apiKey: item.apiKey, proxyEnabled: item.proxyEnabled === true, proxyUrl: item.proxyUrl || '' };
                 break;
             case 'live.sources':
             case 'liveTV.sources': {

@@ -137,6 +137,21 @@ func NewStreamingProvider(cfg *config.Manager) *StreamingProvider {
 	}
 }
 
+// downloadClient returns the HTTP client for fetching providerName's CDN
+// links: the shared direct client, or a pooled client through the
+// provider's proxy. A misconfigured proxy is an error (fail closed).
+func (p *StreamingProvider) downloadClient(providerName string) (*http.Client, error) {
+	if p.cfg == nil {
+		// No settings means no provider (and so no proxy) is configured.
+		return p.httpClient, nil
+	}
+	settings, err := p.cfg.Load()
+	if err != nil {
+		return nil, fmt.Errorf("load settings: %w", err)
+	}
+	return streamHTTPClientFor(p.httpClient, &settings, providerName)
+}
+
 // getCachedURL retrieves a cached unrestricted URL if it exists and hasn't expired.
 func (p *StreamingProvider) getCachedURL(cacheKey string) (url string, filename string, rarOffset int64, rarSize int64, found bool) {
 	p.cacheMux.RLock()
@@ -218,15 +233,6 @@ func (p *StreamingProvider) GetDirectURL(ctx context.Context, path string) (stri
 	// Check cache first
 	cacheKey := cacheKeyFor(torrentID, fileID)
 
-	if cachedURL, _, rarOffset, _, found := p.getCachedURL(cacheKey); found {
-		if rarOffset > 0 {
-			// RAR-packed files must go through the proxy for range translation
-			return "", fmt.Errorf("RAR-packed file requires proxy streaming")
-		}
-		log.Printf("[debrid-stream] using cached URL for torrent %s file %s", torrentID, fileID)
-		return cachedURL, nil
-	}
-
 	// Get provider config
 	settings, err := p.cfg.Load()
 	if err != nil {
@@ -234,22 +240,43 @@ func (p *StreamingProvider) GetDirectURL(ctx context.Context, path string) (stri
 	}
 
 	// Find the provider configuration
-	var apiKey string
-	for _, debridProvider := range settings.Streaming.DebridProviders {
-		if strings.EqualFold(debridProvider.Provider, provider) && debridProvider.Enabled {
-			apiKey = strings.TrimSpace(debridProvider.APIKey)
+	var providerConfig *config.DebridProviderSettings
+	for i := range settings.Streaming.DebridProviders {
+		debridProvider := &settings.Streaming.DebridProviders[i]
+		if strings.EqualFold(debridProvider.Provider, provider) && debridProvider.Enabled && strings.TrimSpace(debridProvider.APIKey) != "" {
+			providerConfig = debridProvider
 			break
 		}
 	}
 
-	if apiKey == "" {
+	if providerConfig == nil {
 		return "", fmt.Errorf("provider %s not configured or not enabled", provider)
 	}
 
-	// Get provider from registry
-	client, ok := GetProvider(provider, apiKey)
-	if !ok {
-		return "", fmt.Errorf("provider %s not registered", provider)
+	// A proxied provider never hands out its CDN URL: FFmpeg, probes and
+	// client apps would fetch it directly and bypass the proxy. Fail closed
+	// on a misconfigured proxy too.
+	proxyURL, err := providerConfig.EffectiveProxyURL()
+	if err != nil {
+		return "", err
+	}
+	proxied := proxyURL != ""
+
+	if cachedURL, _, rarOffset, _, found := p.getCachedURL(cacheKey); found {
+		if rarOffset > 0 {
+			// RAR-packed files must go through the proxy for range translation
+			return "", fmt.Errorf("RAR-packed file requires proxy streaming")
+		}
+		if proxied {
+			return "", ErrDirectURLProxied
+		}
+		log.Printf("[debrid-stream] using cached URL for torrent %s file %s", torrentID, fileID)
+		return cachedURL, nil
+	}
+
+	client, err := NewProviderFromSettings(*providerConfig)
+	if err != nil {
+		return "", err
 	}
 
 	info, err := client.GetTorrentInfo(ctx, torrentID)
@@ -297,6 +324,12 @@ func (p *StreamingProvider) GetDirectURL(ctx context.Context, path string) (stri
 	// Cache the URL and filename for future requests
 	p.setCachedURL(cacheKey, downloadURL, filename, 0, 0)
 
+	if proxied {
+		// The link stays cached for Stream, which fetches it through the proxy.
+		log.Printf("[debrid-stream] resolved URL for path %s behind provider proxy; not exposing direct URL", path)
+		return "", ErrDirectURLProxied
+	}
+
 	log.Printf("[debrid-stream] resolved direct URL for path %s: %s (filename: %s)", path, safeURLForLog(downloadURL), filename)
 	return downloadURL, nil
 }
@@ -342,10 +375,9 @@ func (p *StreamingProvider) Stream(ctx context.Context, req streaming.Request) (
 		return nil, fmt.Errorf("provider %q not configured", provider)
 	}
 
-	// Get provider from registry
-	client, ok := GetProvider(strings.ToLower(providerConfig.Provider), providerConfig.APIKey)
-	if !ok {
-		return nil, fmt.Errorf("provider %q not registered", providerConfig.Provider)
+	client, err := NewProviderFromSettings(*providerConfig)
+	if err != nil {
+		return nil, err
 	}
 
 	return p.streamWithProvider(ctx, req, client, torrentID, fileID, true)
@@ -357,6 +389,10 @@ func (p *StreamingProvider) streamWithProvider(ctx context.Context, req streamin
 
 func (p *StreamingProvider) streamWithProviderInfo(ctx context.Context, req streaming.Request, client Provider, torrentID, fileID string, retryCachedFailure bool, prefetchedInfo *TorrentInfo) (*streaming.Response, error) {
 	providerName := client.Name()
+	httpClient, err := p.downloadClient(providerName)
+	if err != nil {
+		return nil, err
+	}
 	var downloadURL string
 	var filename string
 	var rarOffset, rarSize int64
@@ -429,7 +465,7 @@ func (p *StreamingProvider) streamWithProviderInfo(ctx context.Context, req stre
 		// Detect RAR-packed torrents and parse file offsets
 		if isRARPacked(info) {
 			log.Printf("[debrid-stream] RAR file detected for torrent %s, parsing headers", torrentID)
-			entries, parseErr := parseRAR4StoredFiles(ctx, p.httpClient, downloadURL)
+			entries, parseErr := parseRAR4StoredFiles(ctx, httpClient, downloadURL)
 			if parseErr != nil {
 				log.Printf("[debrid-stream] RAR parse failed: %v — falling back to raw stream", parseErr)
 			} else {
@@ -484,7 +520,7 @@ func (p *StreamingProvider) streamWithProviderInfo(ctx context.Context, req stre
 			}
 		}
 
-		resp, err = p.httpClient.Do(httpReq.Clone(ctx))
+		resp, err = httpClient.Do(httpReq.Clone(ctx))
 		if err != nil || !isTorboxDownload || resp.StatusCode != http.StatusTooManyRequests {
 			break
 		}
@@ -618,9 +654,9 @@ func (p *StreamingProvider) StreamRelatedFile(ctx context.Context, sourcePath, r
 		return nil, streaming.ErrNotFound
 	}
 
-	client, ok := GetProvider(strings.ToLower(providerConfig.Provider), providerConfig.APIKey)
-	if !ok {
-		return nil, streaming.ErrNotFound
+	client, err := NewProviderFromSettings(*providerConfig)
+	if err != nil {
+		return nil, err
 	}
 
 	info, err := client.GetTorrentInfo(ctx, torrentID)

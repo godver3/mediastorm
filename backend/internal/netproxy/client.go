@@ -28,10 +28,30 @@ type HTTPClientOptions struct {
 	ResponseHeaderTimeout time.Duration
 }
 
+// baseTransport is the stock default transport, captured at init so later
+// replacement of http.DefaultTransport (tests, instrumentation) cannot change
+// or break the transports built here.
+var baseTransport = http.DefaultTransport.(*http.Transport).Clone()
+
 // NewHTTPClientWithOptions returns an HTTP client that optionally routes
 // requests through an HTTP(S) or SOCKS5 proxy URL.
 func NewHTTPClientWithOptions(options HTTPClientOptions, rawProxyURL string) (*http.Client, error) {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport, err := NewTransport(options, rawProxyURL)
+	if err != nil {
+		return nil, err
+	}
+	return &http.Client{
+		Timeout:   options.Timeout,
+		Transport: transport,
+	}, nil
+}
+
+// NewTransport returns a cloned default transport that routes through
+// rawProxyURL when it is non-empty. Callers may tune pool sizes and timeouts
+// on the result but must not replace Proxy or DialContext, which carry the
+// proxy routing.
+func NewTransport(options HTTPClientOptions, rawProxyURL string) (*http.Transport, error) {
+	transport := baseTransport.Clone()
 	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 	transport.ResponseHeaderTimeout = options.ResponseHeaderTimeout
 	dnscache.ConfigureTransport(transport, dnscache.DefaultTTL)
@@ -42,17 +62,16 @@ func NewHTTPClientWithOptions(options HTTPClientOptions, rawProxyURL string) (*h
 			return nil, err
 		}
 	}
-
-	return &http.Client{
-		Timeout:   options.Timeout,
-		Transport: transport,
-	}, nil
+	return transport, nil
 }
 
 func configureTransportProxy(transport *http.Transport, rawProxyURL string) error {
 	parsed, err := url.Parse(rawProxyURL)
 	if err != nil {
 		return fmt.Errorf("invalid proxy URL: %w", err)
+	}
+	if parsed.Host == "" {
+		return fmt.Errorf("invalid proxy URL: missing host")
 	}
 
 	switch strings.ToLower(parsed.Scheme) {

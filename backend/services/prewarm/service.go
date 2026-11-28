@@ -17,6 +17,7 @@ import (
 	"novastream/config"
 	"novastream/internal/datastore"
 	"novastream/models"
+	"novastream/services/debrid"
 	"novastream/services/playback"
 )
 
@@ -1031,7 +1032,8 @@ func (s *Service) RefreshURLs(ctx context.Context) error {
 		}
 
 		_, err := s.debridStreaming.GetDirectURL(ctx, entry.StreamPath)
-		if err != nil {
+		// A proxied provider resolves and caches the link but withholds it.
+		if err != nil && !errors.Is(err, debrid.ErrDirectURLProxied) {
 			log.Printf("[prewarm] URL refresh warning for %q: %v (URL may still work)", entry.TitleName, err)
 			continue
 		}

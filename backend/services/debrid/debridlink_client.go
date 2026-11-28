@@ -11,8 +11,6 @@ import (
 	"net/url"
 	"strings"
 	"time"
-
-	"novastream/internal/apiusage"
 )
 
 // DebridLinkClient implements the public v2 seedbox API.
@@ -34,7 +32,7 @@ func NewDebridLinkClient(apiKey string) *DebridLinkClient {
 	return &DebridLinkClient{
 		apiKey:     strings.TrimSpace(apiKey),
 		baseURL:    "https://debrid-link.com/api/v2",
-		httpClient: apiusage.TrackClient(&http.Client{Timeout: 30 * time.Second}, "Debrid-Link", "API request"),
+		httpClient: newProviderAPIClient(nil, "Debrid-Link"),
 	}
 }
 
@@ -256,4 +254,9 @@ func (c *DebridLinkClient) GetAccountInfo(ctx context.Context) (*AccountInfo, er
 		info.DaysRemaining = int(account.PremiumLeft / 86400)
 	}
 	return info, nil
+}
+
+// useHTTPTransport installs rt (the provider's proxy) for all API calls.
+func (c *DebridLinkClient) useHTTPTransport(rt http.RoundTripper) {
+	c.httpClient = newProviderAPIClient(rt, "Debrid-Link")
 }

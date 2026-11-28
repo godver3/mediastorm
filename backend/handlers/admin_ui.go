@@ -431,6 +431,19 @@ var SettingsSchema = map[string]interface{}{
 				"order":       5,
 				"showWhen":    "provider=torbox",
 			},
+			"proxyEnabled": map[string]interface{}{
+				"type":        "boolean",
+				"label":       "Use Proxy",
+				"description": "Send all traffic for this provider (API calls, link unlocks and stream downloads) through the proxy below. Use when the provider blocks this server's IP. Streams are limited to the proxy's bandwidth, and direct-URL features (direct FFmpeg input, track pre-probing) fall back to streaming through the server.",
+				"order":       6,
+			},
+			"proxyUrl": map[string]interface{}{
+				"type":        "password",
+				"label":       "Proxy URL",
+				"description": "http://, https://, socks5:// or socks5h:// URL, e.g. socks5h://user:pass@host:1080. Required while Use Proxy is on; the provider is skipped rather than connecting directly if it is missing or invalid.",
+				"order":       7,
+				"showWhen":    map[string]interface{}{"field": "proxyEnabled", "value": true},
+			},
 		},
 	},
 	"usenet": map[string]interface{}{
@@ -3972,79 +3985,20 @@ func (h *AdminUIHandler) GetDebridStatus(w http.ResponseWriter, r *http.Request)
 		}
 
 		if p.APIKey != "" {
-			// Fetch account info only for enabled providers.
-			switch p.Provider {
-			case "realdebrid":
-				client := debrid.NewRealDebridClient(p.APIKey)
-				if info, err := client.GetAccountInfo(ctx); err == nil {
+			// Fetch account info only for enabled providers, through the
+			// provider's proxy when it has one.
+			type accountInfoProvider interface {
+				GetAccountInfo(ctx context.Context) (*debrid.AccountInfo, error)
+			}
+			client, err := debrid.NewProviderFromSettings(p)
+			if err != nil {
+				status.Error = err.Error()
+			} else if infoClient, ok := client.(accountInfoProvider); ok {
+				if info, err := infoClient.GetAccountInfo(ctx); err == nil {
 					status.Username = info.Username
 					status.Email = info.Email
 					status.PremiumActive = info.PremiumActive
 					status.IsLifetime = info.IsLifetime
-					if info.ExpiresAt != nil {
-						status.ExpiresAt = info.ExpiresAt.Format("2006-01-02")
-						status.DaysRemaining = info.DaysRemaining
-					}
-				} else {
-					status.Error = err.Error()
-				}
-			case "torbox":
-				client := debrid.NewTorboxClient(p.APIKey)
-				if info, err := client.GetAccountInfo(ctx); err == nil {
-					status.Username = info.Username
-					status.Email = info.Email
-					status.PremiumActive = info.PremiumActive
-					if info.ExpiresAt != nil {
-						status.ExpiresAt = info.ExpiresAt.Format("2006-01-02")
-						status.DaysRemaining = info.DaysRemaining
-					}
-				} else {
-					status.Error = err.Error()
-				}
-			case "alldebrid":
-				client := debrid.NewAllDebridClient(p.APIKey)
-				if info, err := client.GetAccountInfo(ctx); err == nil {
-					status.Username = info.Username
-					status.Email = info.Email
-					status.PremiumActive = info.PremiumActive
-					if info.ExpiresAt != nil {
-						status.ExpiresAt = info.ExpiresAt.Format("2006-01-02")
-						status.DaysRemaining = info.DaysRemaining
-					}
-				} else {
-					status.Error = err.Error()
-				}
-			case "debridlink":
-				client := debrid.NewDebridLinkClient(p.APIKey)
-				if info, err := client.GetAccountInfo(ctx); err == nil {
-					status.Username = info.Username
-					status.Email = info.Email
-					status.PremiumActive = info.PremiumActive
-					if info.ExpiresAt != nil {
-						status.ExpiresAt = info.ExpiresAt.Format("2006-01-02")
-						status.DaysRemaining = info.DaysRemaining
-					}
-				} else {
-					status.Error = err.Error()
-				}
-			case "premiumize":
-				client := debrid.NewPremiumizeClient(p.APIKey)
-				if info, err := client.GetAccountInfo(ctx); err == nil {
-					status.Username = info.Username
-					status.PremiumActive = info.PremiumActive
-					if info.ExpiresAt != nil {
-						status.ExpiresAt = info.ExpiresAt.Format("2006-01-02")
-						status.DaysRemaining = info.DaysRemaining
-					}
-				} else {
-					status.Error = err.Error()
-				}
-			case "torrin":
-				client := debrid.NewTorrinClient(p.APIKey)
-				if info, err := client.GetAccountInfo(ctx); err == nil {
-					status.Username = info.Username
-					status.Email = info.Email
-					status.PremiumActive = info.PremiumActive
 					if info.ExpiresAt != nil {
 						status.ExpiresAt = info.ExpiresAt.Format("2006-01-02")
 						status.DaysRemaining = info.DaysRemaining
@@ -7420,9 +7374,22 @@ func firstNonEmptyString(values ...string) string {
 
 // TestDebridProviderRequest represents a request to test a debrid provider
 type TestDebridProviderRequest struct {
-	Name     string `json:"name"`
-	Provider string `json:"provider"`
-	APIKey   string `json:"apiKey"`
+	Name         string `json:"name"`
+	Provider     string `json:"provider"`
+	APIKey       string `json:"apiKey"`
+	ProxyEnabled bool   `json:"proxyEnabled"`
+	ProxyURL     string `json:"proxyUrl"`
+}
+
+func (r TestDebridProviderRequest) providerSettings() config.DebridProviderSettings {
+	return config.DebridProviderSettings{
+		Name:         r.Name,
+		Provider:     r.Provider,
+		APIKey:       r.APIKey,
+		Enabled:      true,
+		ProxyEnabled: r.ProxyEnabled,
+		ProxyURL:     r.ProxyURL,
+	}
 }
 
 // ProfileWithPinStatus represents a profile with its PIN status
@@ -10655,7 +10622,30 @@ func (h *AdminUIHandler) TestDebridProvider(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	client := &http.Client{Timeout: 15 * time.Second}
+	// Every test request goes through the provider's proxy when enabled, so
+	// the test proves the proxied path and never leaks the server IP.
+	providerSettings := req.providerSettings()
+	client, err := debrid.NewProviderHTTPClient(providerSettings, 15*time.Second)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": err.Error()})
+		return
+	}
+	providerClient := func() (interface {
+		GetAccountInfo(ctx context.Context) (*debrid.AccountInfo, error)
+	}, error) {
+		p, err := debrid.NewProviderFromSettings(providerSettings)
+		if err != nil {
+			return nil, err
+		}
+		infoClient, ok := p.(interface {
+			GetAccountInfo(ctx context.Context) (*debrid.AccountInfo, error)
+		})
+		if !ok {
+			return nil, fmt.Errorf("provider %q has no account info", providerSettings.Provider)
+		}
+		return infoClient, nil
+	}
 
 	switch strings.ToLower(req.Provider) {
 	case "realdebrid":
@@ -10809,7 +10799,11 @@ func (h *AdminUIHandler) TestDebridProvider(w http.ResponseWriter, r *http.Reque
 		})
 
 	case "debridlink":
-		info, err := debrid.NewDebridLinkClient(req.APIKey).GetAccountInfo(r.Context())
+		infoClient, err := providerClient()
+		var info *debrid.AccountInfo
+		if err == nil {
+			info, err = infoClient.GetAccountInfo(r.Context())
+		}
 		w.Header().Set("Content-Type", "application/json")
 		if err != nil {
 			json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": err.Error()})
@@ -10898,8 +10892,11 @@ func (h *AdminUIHandler) TestDebridProvider(w http.ResponseWriter, r *http.Reque
 		})
 
 	case "premiumize":
-		pmClient := debrid.NewPremiumizeClient(req.APIKey)
-		info, err := pmClient.GetAccountInfo(r.Context())
+		infoClient, err := providerClient()
+		var info *debrid.AccountInfo
+		if err == nil {
+			info, err = infoClient.GetAccountInfo(r.Context())
+		}
 		if err != nil {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]interface{}{
@@ -10920,8 +10917,11 @@ func (h *AdminUIHandler) TestDebridProvider(w http.ResponseWriter, r *http.Reque
 		})
 
 	case "torrin":
-		torrinClient := debrid.NewTorrinClient(req.APIKey)
-		info, err := torrinClient.GetAccountInfo(r.Context())
+		infoClient, err := providerClient()
+		var info *debrid.AccountInfo
+		if err == nil {
+			info, err = infoClient.GetAccountInfo(r.Context())
+		}
 		if err != nil {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]interface{}{

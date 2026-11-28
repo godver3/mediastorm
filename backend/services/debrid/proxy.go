@@ -96,7 +96,12 @@ func (s *ProxyService) Proxy(ctx context.Context, req ProxyRequest) (*streaming.
 		httpReq.Header.Set("Authorization", fmt.Sprintf("Bearer %s", apiKey))
 	}
 
-	resp, err := s.httpClient.Do(httpReq)
+	httpClient, err := streamHTTPClientFor(s.httpClient, &settings, providerConfig.Provider)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := httpClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("debrid proxy request failed: %w", err)
 	}

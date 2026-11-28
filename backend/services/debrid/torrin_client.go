@@ -11,8 +11,6 @@ import (
 	"path"
 	"strings"
 	"time"
-
-	"novastream/internal/apiusage"
 )
 
 const torrinAvailabilityBatchSize = 100
@@ -33,7 +31,7 @@ var _ InstantAvailabilityBulkProvider = (*TorrinClient)(nil)
 func NewTorrinClient(apiKey string) *TorrinClient {
 	return &TorrinClient{
 		apiKey:     strings.TrimSpace(apiKey),
-		httpClient: apiusage.TrackClient(&http.Client{Timeout: 30 * time.Second}, "Torrin", "API request"),
+		httpClient: newProviderAPIClient(nil, "Torrin"),
 		baseURL:    "https://api.torrin.app",
 	}
 }
@@ -392,4 +390,9 @@ func torrinStatusDownloaded(status string) bool {
 
 func normalizeTorrinHash(infoHash string) string {
 	return strings.ToLower(strings.TrimSpace(infoHash))
+}
+
+// useHTTPTransport installs rt (the provider's proxy) for all API calls.
+func (c *TorrinClient) useHTTPTransport(rt http.RoundTripper) {
+	c.httpClient = newProviderAPIClient(rt, "Torrin")
 }

@@ -478,9 +478,9 @@ func (s *PlaybackService) resolveSingleProvider(
 	}
 
 	// Get provider from registry
-	client, ok := GetProvider(strings.ToLower(providerConfig.Provider), providerConfig.APIKey)
-	if !ok {
-		return nil, fmt.Errorf("provider %q not registered", providerConfig.Provider)
+	client, err := NewProviderFromSettings(*providerConfig)
+	if err != nil {
+		return nil, err
 	}
 	client = s.circuit.wrap(client)
 
@@ -854,9 +854,9 @@ func (s *PlaybackService) ResolveBatch(ctx context.Context, candidate models.NZB
 		}
 		return nil, fmt.Errorf("no debrid provider configured or enabled")
 	}
-	client, ok := GetProvider(strings.ToLower(providerConfig.Provider), providerConfig.APIKey)
-	if !ok {
-		return nil, fmt.Errorf("provider %q not registered", providerConfig.Provider)
+	client, err := NewProviderFromSettings(*providerConfig)
+	if err != nil {
+		return nil, err
 	}
 	client = s.circuit.wrap(client)
 	providerName := client.Name()

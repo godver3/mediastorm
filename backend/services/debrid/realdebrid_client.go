@@ -13,8 +13,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"novastream/internal/apiusage"
 )
 
 const (
@@ -48,7 +46,7 @@ func NewRealDebridClient(apiKey string) *RealDebridClient {
 	trimmedKey := strings.TrimSpace(apiKey)
 	return &RealDebridClient{
 		apiKey:      trimmedKey,
-		httpClient:  apiusage.TrackClient(&http.Client{Timeout: 30 * time.Second}, "Real-Debrid", "API request"),
+		httpClient:  newProviderAPIClient(nil, "Real-Debrid"),
 		baseURL:     "https://api.real-debrid.com/rest/1.0",
 		rateLimiter: realDebridRateLimiterForKey(trimmedKey),
 	}
@@ -681,4 +679,9 @@ func (c *RealDebridClient) SelectFiles(ctx context.Context, torrentID string, fi
 	}
 
 	return nil
+}
+
+// useHTTPTransport installs rt (the provider's proxy) for all API calls.
+func (c *RealDebridClient) useHTTPTransport(rt http.RoundTripper) {
+	c.httpClient = newProviderAPIClient(rt, "Real-Debrid")
 }

@@ -12,9 +12,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
-
-	"novastream/internal/apiusage"
 )
 
 // AllDebridClient handles API interactions with AllDebrid service.
@@ -33,7 +30,7 @@ var _ Provider = (*AllDebridClient)(nil)
 func NewAllDebridClient(apiKey string) *AllDebridClient {
 	return &AllDebridClient{
 		apiKey:     strings.TrimSpace(apiKey),
-		httpClient: apiusage.TrackClient(&http.Client{Timeout: 30 * time.Second}, "AllDebrid", "API request"),
+		httpClient: newProviderAPIClient(nil, "AllDebrid"),
 		baseURL:    "https://api.alldebrid.com/v4",
 		agent:      "mediastorm",
 	}
@@ -656,4 +653,9 @@ func allDebridErrorText(code, message string) string {
 	default:
 		return message + " (" + code + ")"
 	}
+}
+
+// useHTTPTransport installs rt (the provider's proxy) for all API calls.
+func (c *AllDebridClient) useHTTPTransport(rt http.RoundTripper) {
+	c.httpClient = newProviderAPIClient(rt, "AllDebrid")
 }

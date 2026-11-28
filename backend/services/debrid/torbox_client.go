@@ -12,9 +12,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
 
-	"novastream/internal/apiusage"
 	"novastream/internal/urlredact"
 )
 
@@ -35,7 +33,7 @@ var _ Configurable = (*TorboxClient)(nil)
 func NewTorboxClient(apiKey string) *TorboxClient {
 	return &TorboxClient{
 		apiKey:     strings.TrimSpace(apiKey),
-		httpClient: apiusage.TrackClient(&http.Client{Timeout: 30 * time.Second}, "TorBox", "API request"),
+		httpClient: newProviderAPIClient(nil, "TorBox"),
 		baseURL:    "https://api.torbox.app/v1/api",
 	}
 }
@@ -829,4 +827,9 @@ func parseTorboxCheckCachedResponse(body []byte) (map[string]bool, string, error
 	}
 
 	return nil, "", fmt.Errorf("decode check cached data: unsupported response shape")
+}
+
+// useHTTPTransport installs rt (the provider's proxy) for all API calls.
+func (c *TorboxClient) useHTTPTransport(rt http.RoundTripper) {
+	c.httpClient = newProviderAPIClient(rt, "TorBox")
 }

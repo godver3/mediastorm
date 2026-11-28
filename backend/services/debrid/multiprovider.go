@@ -68,17 +68,12 @@ func (s *MultiProviderService) CheckCacheAcrossProviders(
 			continue
 		}
 
-		client, ok := GetProvider(strings.ToLower(p.Provider), p.APIKey)
-		if !ok {
-			log.Printf("[multi-provider] provider %q not registered, skipping", p.Provider)
+		client, err := NewProviderFromSettings(*p)
+		if err != nil {
+			log.Printf("[multi-provider] skipping provider %q: %v", p.Name, err)
 			continue
 		}
 		client = s.circuit.wrap(client)
-
-		// Apply provider-specific configuration if supported
-		if configurable, ok := client.(Configurable); ok && p.Config != nil {
-			configurable.Configure(p.Config)
-		}
 
 		enabledProviders = append(enabledProviders, providerEntry{
 			config:   p,

@@ -409,12 +409,10 @@ func (s *HealthService) checkQuickCacheAcrossProvidersBulk(ctx context.Context, 
 		if !providerConfig.Enabled || strings.TrimSpace(providerConfig.APIKey) == "" {
 			continue
 		}
-		client, ok := GetProvider(strings.ToLower(providerConfig.Provider), providerConfig.APIKey)
-		if !ok {
+		client, err := NewProviderFromSettings(*providerConfig)
+		if err != nil {
+			log.Printf("[debrid-health] skipping provider %q: %v", providerConfig.Name, err)
 			continue
-		}
-		if configurable, ok := client.(Configurable); ok && providerConfig.Config != nil {
-			configurable.Configure(providerConfig.Config)
 		}
 		providers = append(providers, quickProvider{name: client.Name(), client: client})
 	}
@@ -872,12 +870,10 @@ func (s *HealthService) checkHealthAcrossProviders(ctx context.Context, settings
 		if !providerConfig.Enabled || strings.TrimSpace(providerConfig.APIKey) == "" {
 			continue
 		}
-		client, ok := GetProvider(strings.ToLower(providerConfig.Provider), providerConfig.APIKey)
-		if !ok {
+		client, err := NewProviderFromSettings(*providerConfig)
+		if err != nil {
+			log.Printf("[debrid-health] skipping provider %q: %v", providerConfig.Name, err)
 			continue
-		}
-		if configurable, ok := client.(Configurable); ok && providerConfig.Config != nil {
-			configurable.Configure(providerConfig.Config)
 		}
 		providers = append(providers, configuredProvider{name: client.Name(), client: client})
 	}
@@ -1062,6 +1058,21 @@ func probePreResolvedPlaceholderRedirect(ctx context.Context, streamURL string, 
 
 	finalURL = resp.Request.URL.String()
 	return IsKnownPlaceholderResponse(finalURL, body), resp.StatusCode, finalURL, nil
+}
+
+// providerRoutesThroughProxy reports whether providerName's traffic must go
+// through a proxy. A misconfigured proxy or unreadable settings count as
+// proxied so callers fail closed and never fetch directly.
+func (s *HealthService) providerRoutesThroughProxy(providerName string) bool {
+	if s == nil || s.cfg == nil {
+		return false
+	}
+	settings, err := s.cfg.Load()
+	if err != nil {
+		return true
+	}
+	proxyURL, err := proxyURLForProvider(&settings, providerName)
+	return err != nil || proxyURL != ""
 }
 
 func (s *HealthService) checkProviderHealth(ctx context.Context, client Provider, result models.NZBResult, infoHash, torrentURL string, verifyUncached bool) (*DebridHealthCheck, error) {
@@ -1361,6 +1372,13 @@ func (s *HealthService) checkProviderHealth(ctx context.Context, client Provider
 				// Already probing, return loading state
 				healthResult.TracksLoading = true
 				log.Printf("[debrid-health] track probe in progress for %s", trackCacheKey)
+			} else if s.providerRoutesThroughProxy(providerName) {
+				// ffprobe would fetch the CDN link directly from the server,
+				// bypassing the provider's proxy, so skip the track probe.
+				s.probingMu.Lock()
+				delete(s.probing, trackCacheKey)
+				s.probingMu.Unlock()
+				log.Printf("[debrid-health] skipping track probe for %s: %s routes through a proxy", trackCacheKey, providerName)
 			} else {
 				// Start async probe - need to unrestrict link first (before torrent is deleted)
 				unrestricted, err := client.UnrestrictLink(ctx, info.Links[preferredLinkIdx])
