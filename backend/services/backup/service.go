@@ -876,6 +876,7 @@ type databaseExport struct {
 	RemoteMediaLibraries     []models.RemoteMediaLibrary            `json:"remoteMediaLibraries,omitempty"`
 	RemoteMediaItems         []models.RemoteMediaItem               `json:"remoteMediaItems,omitempty"`
 	LibraryAccessPolicies    map[string]models.LibraryAccessPolicy  `json:"libraryAccessPolicies,omitempty"`
+	RecordingRules           []models.RecordingRule                 `json:"recordingRules,omitempty"`
 	Recordings               []models.Recording                     `json:"recordings,omitempty"`
 	NumbersStationProgress   []models.NumbersStationProgress        `json:"numbersStationProgress"`
 	QualityPresets           []*qualityprofiles.Preset              `json:"qualityPresets,omitempty"`
@@ -914,6 +915,7 @@ var databaseExportSections = []string{
 	"remoteMediaLibraries",
 	"remoteMediaItems",
 	"libraryAccessPolicies",
+	"recordingRules",
 	"recordings",
 	"numbersStationProgress",
 	"qualityPresets",
@@ -1120,6 +1122,12 @@ func (s *Service) exportDatabaseBytes() ([]byte, error) {
 		return nil, fmt.Errorf("export library access policies: %w", err)
 	}
 	export.LibraryAccessPolicies = libraryAccess
+
+	recordingRules, err := s.store.RecordingRules().ListRules(ctx, "", true, false)
+	if err != nil {
+		return nil, fmt.Errorf("export recording rules: %w", err)
+	}
+	export.RecordingRules = recordingRules
 
 	recordings, err := s.store.Recordings().List(ctx, models.RecordingListFilter{IncludeAll: true})
 	if err != nil {
@@ -1428,8 +1436,22 @@ func (s *Service) importDatabaseBytes(data []byte) error {
 				return fmt.Errorf("restore library access policy %s: %w", libraryID, err)
 			}
 		}
+		// Rules first: recordings reference them via rule_id (FK). Backups made
+		// before rules were exported have no recordingRules section; their
+		// recordings fall back to rule_id "" below so the restore still succeeds.
+		restoredRules := make(map[string]bool, len(export.RecordingRules))
+		for i := range export.RecordingRules {
+			rule := export.RecordingRules[i]
+			if err := tx.RecordingRules().CreateRule(ctx, &rule); err != nil {
+				return fmt.Errorf("restore recording rule %s: %w", rule.ID, err)
+			}
+			restoredRules[rule.ID] = true
+		}
 		for i := range export.Recordings {
 			recording := export.Recordings[i]
+			if recording.RuleID != "" && !restoredRules[recording.RuleID] {
+				recording.RuleID = "" // rule missing from the backup (old export)
+			}
 			if err := tx.Recordings().Create(ctx, &recording); err != nil {
 				return fmt.Errorf("restore recording %s: %w", recording.ID, err)
 			}
