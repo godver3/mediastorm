@@ -40,3 +40,18 @@ func ParseNewznabError(body []byte) (string, bool) {
 		return "indexer returned an API error", true
 	}
 }
+
+// newznabErrorTripsBreaker reports whether an <error> document describes a
+// failure that should back the indexer off (credentials/account, request limit
+// reached or server error) rather than a one-off bad request.
+func newznabErrorTripsBreaker(body []byte) bool {
+	var e newznabErrorResponse
+	if err := xml.Unmarshal(body, &e); err != nil || !strings.EqualFold(e.XMLName.Local, "error") {
+		return false
+	}
+	switch strings.TrimSpace(e.Code) {
+	case "100", "101", "429", "500":
+		return true
+	}
+	return strings.Contains(strings.ToLower(e.Description), "limit")
+}
