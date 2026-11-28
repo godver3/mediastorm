@@ -25,6 +25,7 @@ import (
 	"novastream/internal/apiusage"
 	"novastream/internal/database"
 	"novastream/internal/datastore"
+	"novastream/internal/importer"
 	"novastream/internal/integration"
 	"novastream/internal/jellyfinbridge"
 	"novastream/internal/mediaidentity"
@@ -2113,6 +2114,26 @@ func main() {
 	if webdavHandler != nil {
 		r.PathPrefix(settings.WebDAV.Prefix + "/").Handler(webdavHandler)
 		fmt.Printf("✅ WebDAV mounted at %s\n", settings.WebDAV.Prefix)
+	}
+
+	// Remote usenet engine API: lets another mediastorm instance use this
+	// backend's built-in usenet engine (env-gated, not an admin setting).
+	if engineServer, err := handlers.NewUsenetEngineServer(os.Getenv(handlers.EngineServerKeyEnv), func(ctx context.Context, fileName string, nzb []byte) (string, error) {
+		importerSvc := nzbSystem.ImporterService()
+		if importerSvc == nil {
+			return "", fmt.Errorf("importer service not configured")
+		}
+		return importerSvc.ProcessNZBImmediatelyWithSource(ctx, fileName, nzb, importer.ResolvedNZBSource{
+			Title: strings.TrimSuffix(fileName, ".nzb"),
+		})
+	}); err != nil {
+		log.Printf("[engine-server] disabled: %v", err)
+	} else if engineServer != nil {
+		if webdavHandler == nil {
+			log.Printf("[engine-server] warning: WebDAV is disabled, remote instances cannot stream completed jobs")
+		}
+		r.Handle("/internal/usenet-engine/api", engineServer).Methods(http.MethodGet, http.MethodPost)
+		fmt.Println("✅ Remote usenet engine API enabled at /internal/usenet-engine/api")
 	}
 
 	// Jellyfin bridge: a separate listener that lets stock Jellyfin clients

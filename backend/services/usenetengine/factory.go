@@ -12,24 +12,25 @@ import (
 func NewFromSettings(settings config.UsenetEngineSettings, httpClient HTTPDoer) (Engine, error) {
 	engineType := normalizeEngineType(settings.Type)
 	switch engineType {
-	case "altmount", "nzbdav", "nzbdavex", "decypharr", "sabnzbd", "":
+	case "altmount", "nzbdav", "nzbdavex", "decypharr", "sabnzbd", "mediastorm", "":
 		apiPath := strings.TrimSpace(settings.APIPath)
 		if apiPath == "" {
 			apiPath = defaultAPIPath(engineType)
 		}
 		baseURL, normalizedAPIPath := splitConfiguredAPIEndpoint(settings.BaseURL, apiPath, engineType)
 		return NewSABClient(SABConfig{
-			Name:            firstConfigured(settings.Name, settings.Type, "usenet-engine"),
-			BaseURL:         baseURL,
-			APIPath:         normalizedAPIPath,
-			FileFieldName:   defaultFileFieldName(engineType),
-			CategoryInQuery: categoryInQuery(engineType),
-			APIKey:          settings.APIKey,
-			APIKeyAsBearer:  apiKeyAsBearer(engineType),
-			Username:        settings.Username,
-			Password:        settings.Password,
-			UsernameParam:   usernameParam(engineType),
-			PasswordParam:   passwordParam(engineType),
+			Name:             firstConfigured(settings.Name, settings.Type, "usenet-engine"),
+			BaseURL:          baseURL,
+			APIPath:          normalizedAPIPath,
+			FileFieldName:    defaultFileFieldName(engineType),
+			CategoryInQuery:  categoryInQuery(engineType),
+			APIKey:           settings.APIKey,
+			APIKeyAsBearer:   apiKeyAsBearer(engineType),
+			APIKeyHeaderOnly: engineType == "mediastorm",
+			Username:         settings.Username,
+			Password:         settings.Password,
+			UsernameParam:    usernameParam(engineType),
+			PasswordParam:    passwordParam(engineType),
 		}, httpClient)
 	default:
 		return nil, fmt.Errorf("unsupported usenet engine type %q", settings.Type)
@@ -65,6 +66,8 @@ func defaultAPIPath(engineType string) string {
 	switch engineType {
 	case "altmount", "decypharr":
 		return "/sabnzbd/api"
+	case "mediastorm":
+		return "/internal/usenet-engine/api"
 	default:
 		return "/api"
 	}
@@ -81,7 +84,7 @@ func splitConfiguredAPIEndpoint(baseURL, apiPath, engineType string) (string, st
 		return baseURL, apiPath
 	}
 	pathValue := strings.TrimRight(parsed.Path, "/")
-	candidates := []string{apiPath, "/sabnzbd/api", "/api"}
+	candidates := []string{apiPath, "/internal/usenet-engine/api", "/sabnzbd/api", "/api"}
 	seen := map[string]bool{}
 	for _, candidate := range candidates {
 		candidate = strings.TrimRight(strings.TrimSpace(candidate), "/")

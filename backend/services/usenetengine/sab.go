@@ -25,10 +25,13 @@ type SABConfig struct {
 	CategoryInQuery bool
 	APIKey          string
 	APIKeyAsBearer  bool
-	Username        string
-	Password        string
-	UsernameParam   string
-	PasswordParam   string
+	// APIKeyHeaderOnly keeps the key out of the query string (and so out of
+	// access logs); it is sent only in the X-Api-Key header.
+	APIKeyHeaderOnly bool
+	Username         string
+	Password         string
+	UsernameParam    string
+	PasswordParam    string
 }
 
 type SABClient struct {
@@ -238,7 +241,7 @@ func (c *SABClient) apiURL(mode string, extra url.Values) (string, error) {
 	q := base.Query()
 	q.Set("mode", mode)
 	q.Set("output", "json")
-	if c.cfg.APIKey != "" {
+	if c.cfg.APIKey != "" && !c.cfg.APIKeyHeaderOnly {
 		q.Set("apikey", c.cfg.APIKey)
 	}
 	if c.cfg.UsernameParam != "" && c.cfg.Username != "" {

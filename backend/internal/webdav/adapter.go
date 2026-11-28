@@ -2,6 +2,7 @@ package webdav
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"log/slog"
 	"mime"
@@ -10,12 +11,12 @@ import (
 	"strings"
 
 	"github.com/go-pkgz/auth/v2/token"
+	"github.com/spf13/afero"
+	"golang.org/x/net/webdav"
 	"novastream/config"
 	"novastream/internal/database"
 	"novastream/internal/nzb/utils"
 	"novastream/internal/webdav/propfind"
-	"github.com/spf13/afero"
-	"golang.org/x/net/webdav"
 )
 
 // Handler provides WebDAV functionality as an HTTP handler
@@ -35,7 +36,7 @@ func NewHandler(
 ) (*Handler, error) {
 	// Create dynamic auth credentials with initial values
 	authCreds := NewAuthCredentials(config.User, config.Pass)
-	
+
 	// Create custom error handler that maps our errors to proper HTTP status codes
 	errorHandler := &customErrorHandler{
 		fileSystem: aferoToWebdavFS(fs),
@@ -80,7 +81,9 @@ func NewHandler(
 		} else {
 			// Check against dynamic credentials
 			currentUser, currentPass := authCreds.GetCredentials()
-			if username == currentUser && password == currentPass {
+			userOK := subtle.ConstantTimeCompare([]byte(username), []byte(currentUser)) == 1
+			passOK := subtle.ConstantTimeCompare([]byte(password), []byte(currentPass)) == 1
+			if currentPass != "" && userOK && passOK {
 				authenticated = true
 			}
 		}

@@ -1260,6 +1260,12 @@ func externalOutputPathMatchesSubmitted(engineType, outputPath, submittedTitle, 
 	if outputPath == "" {
 		return false
 	}
+	// A remote mediastorm engine reports the storage path of the exact job we
+	// submitted (job IDs are random and per submission); its release folders are
+	// prefixed with an import ID, so release-name matching does not apply.
+	if isMediastormEngineType(engineType) {
+		return true
+	}
 	for _, releaseName := range externalFallbackReleaseNames(submittedTitle, sourceNZBPath) {
 		if externalPathHasExactRelease(outputPath, releaseName) {
 			return true
@@ -1269,6 +1275,10 @@ func externalOutputPathMatchesSubmitted(engineType, outputPath, submittedTitle, 
 		}
 	}
 	return false
+}
+
+func isMediastormEngineType(engineType string) bool {
+	return strings.EqualFold(strings.TrimSpace(engineType), "mediastorm")
 }
 
 func isNZBDavEngineType(engineType string) bool {

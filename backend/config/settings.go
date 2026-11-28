@@ -2438,6 +2438,8 @@ func backfillUsenetEngineDefaults(existing []UsenetEngineSettings) []UsenetEngin
 				existing[i].APIPath = "/api"
 			} else if strings.EqualFold(strings.TrimSpace(existing[i].Type), "altmount") || strings.EqualFold(strings.TrimSpace(existing[i].Type), "decypharr") {
 				existing[i].APIPath = "/sabnzbd/api"
+			} else if strings.EqualFold(strings.TrimSpace(existing[i].Type), "mediastorm") {
+				existing[i].APIPath = "/internal/usenet-engine/api"
 			} else {
 				existing[i].APIPath = "/api"
 			}
