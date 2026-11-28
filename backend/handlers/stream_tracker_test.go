@@ -926,3 +926,28 @@ func TestMarkStopPlaybackHidesOlderRangeRequests(t *testing.T) {
 		t.Fatalf("older range request of the stopped playback still listed: %v", streamIDs(got))
 	}
 }
+
+func TestStoppedPlaybackBlocksStreamsAfterHeartbeatConsumesStop(t *testing.T) {
+	tracker := newTestTracker()
+	url := "/video/stream?profileId=p1&mediaType=movie&itemId=tmdb:movie:14160"
+	id, _, _ := tracker.StartStreamWithAccount(httptest.NewRequest(http.MethodGet, url, nil), "/webdav/a.mkv", 1000, 0, 0, "acct1")
+
+	if tracker.PlaybackBlocked(httptest.NewRequest(http.MethodGet, url, nil)) {
+		t.Fatal("playback blocked before it was stopped")
+	}
+	if !tracker.MarkStopPlayback(id) {
+		t.Fatal("expected stop to be recorded")
+	}
+	update := models.PlaybackProgressUpdate{MediaType: "movie", ItemID: "tmdb:movie:14160"}
+	if !tracker.ShouldStopPlayback("p1", update) {
+		t.Fatal("heartbeat did not receive the stop")
+	}
+	// The heartbeat signal is one-shot, the stream block is not.
+	if !tracker.PlaybackBlocked(httptest.NewRequest(http.MethodGet, url, nil)) {
+		t.Fatal("next range request was not refused")
+	}
+	other := "/video/stream?profileId=p1&mediaType=movie&itemId=tmdb:movie:1"
+	if tracker.PlaybackBlocked(httptest.NewRequest(http.MethodGet, other, nil)) {
+		t.Fatal("block leaked to another title")
+	}
+}

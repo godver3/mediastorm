@@ -22,8 +22,12 @@ type StreamTracker struct {
 	streams       map[string]*TrackedStream
 	recentlyEnded map[string]recentlyEndedStream
 	// slotTotals accumulates bytes per playback slot across its range requests.
-	slotTotals       map[string]*playbackSlotTotals
-	stopPlaybacks    map[string]time.Time
+	slotTotals    map[string]*playbackSlotTotals
+	stopPlaybacks map[string]time.Time
+	// blockedPlaybacks refuses new stream requests for a stopped playback for a
+	// short window. Unlike stopPlaybacks it is not consumed by a heartbeat, so a
+	// player that ignores the heartbeat signal still loses its stream.
+	blockedPlaybacks map[string]time.Time
 	migrationSignals map[string]playbackMigrationSignal
 	// Direct-link playbacks bypass the backend transport; see direct_link_playback.go.
 	directLinkGrants    map[string]directLinkGrant
@@ -257,6 +261,10 @@ var globalStreamTracker = &StreamTracker{
 }
 
 const playbackStopSignalDuration = 2 * time.Minute
+
+// playbackStreamBlockDuration is how long stream requests for a stopped
+// playback are refused. Short, so the user can start the title again soon after.
+const playbackStreamBlockDuration = 45 * time.Second
 const playbackMigrationSignalDuration = 30 * time.Second
 const playbackNotificationTeardownGrace = 30 * time.Second
 
@@ -526,12 +534,56 @@ func (t *StreamTracker) pruneStopSignalsLocked() {
 	if t.stopPlaybacks == nil {
 		t.stopPlaybacks = make(map[string]time.Time)
 	}
+	if t.blockedPlaybacks == nil {
+		t.blockedPlaybacks = make(map[string]time.Time)
+	}
 	now := time.Now()
 	for key, expiresAt := range t.stopPlaybacks {
 		if !expiresAt.After(now) {
 			delete(t.stopPlaybacks, key)
 		}
 	}
+	for key, expiresAt := range t.blockedPlaybacks {
+		if !expiresAt.After(now) {
+			delete(t.blockedPlaybacks, key)
+		}
+	}
+}
+
+// markStopKeysLocked raises the one-shot heartbeat stop and the stream block for keys.
+func (t *StreamTracker) markStopKeysLocked(keys []string) {
+	now := time.Now()
+	for _, key := range keys {
+		t.stopPlaybacks[key] = now.Add(playbackStopSignalDuration)
+		t.blockedPlaybacks[key] = now.Add(playbackStreamBlockDuration)
+	}
+}
+
+// PlaybackBlocked reports whether a stream request belongs to a playback that
+// was stopped from the dashboard within the block window. It does not consume
+// the heartbeat signal.
+func (t *StreamTracker) PlaybackBlocked(r *http.Request) bool {
+	q := r.URL.Query()
+	meta := parseStreamMediaMetadata(r)
+	if meta.ItemID == "" {
+		return false
+	}
+	profileID := q.Get("profileId")
+	if profileID == "" {
+		profileID = q.Get("userId")
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.pruneStopSignalsLocked()
+	for _, userID := range []string{profileID, q.Get("profileName")} {
+		if strings.TrimSpace(userID) == "" {
+			continue
+		}
+		if _, ok := t.blockedPlaybacks[playbackControlKey(userID, meta.MediaType, meta.ItemID)]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func (t *StreamTracker) pruneMigrationSignalsLocked() {
@@ -685,10 +737,7 @@ func (t *StreamTracker) MarkStopPlaybackForProfileMedia(profileID, profileName, 
 	defer t.mu.Unlock()
 	t.pruneStopSignalsLocked()
 
-	expiresAt := time.Now().Add(playbackStopSignalDuration)
-	for _, key := range keys {
-		t.stopPlaybacks[key] = expiresAt
-	}
+	t.markStopKeysLocked(keys)
 	return true
 }
 
@@ -714,10 +763,7 @@ func (t *StreamTracker) MarkStopPlayback(id string) bool {
 	if len(keys) == 0 {
 		return false
 	}
-	expiresAt := time.Now().Add(playbackStopSignalDuration)
-	for _, key := range keys {
-		t.stopPlaybacks[key] = expiresAt
-	}
+	t.markStopKeysLocked(keys)
 	if lingering {
 		t.terminateEndedSlotLocked(ended.stream)
 	}

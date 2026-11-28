@@ -3715,6 +3715,10 @@ func dashboardLandscapeTitleArtwork(title models.Title) string {
 	return ""
 }
 
+// hlsTerminateGrace is how long a terminated HLS session survives so a
+// heartbeat (every 10 s) can stop its player before the session is removed.
+const hlsTerminateGrace = 15 * time.Second
+
 // TerminateStream stops an active stream from the admin/account dashboard.
 func (h *AdminUIHandler) TerminateStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
@@ -3742,11 +3746,23 @@ func (h *AdminUIHandler) TerminateStream(w http.ResponseWriter, r *http.Request)
 				return
 			}
 
-			if !GetStreamTracker().MarkStopPlaybackForProfileMedia(profileID, profileName, mediaType, itemID) {
-				http.Error(w, `{"error":"stream cannot be controlled"}`, http.StatusBadRequest)
-				return
+			// Players that don't heartbeat (live TV) or ignore the stop never
+			// leave on their own, so the session is torn down after a grace that
+			// lets a heartbeat stop a well-behaved player cleanly first. A session
+			// with no media identity (live) can't be flagged and goes straight away.
+			grace := hlsTerminateGrace
+			if GetStreamTracker().MarkStopPlaybackForProfileMedia(profileID, profileName, mediaType, itemID) {
+				log.Printf("[admin-ui] marked HLS stream %s to stop on heartbeat", streamID)
+			} else {
+				grace = 0
 			}
-			log.Printf("[admin-ui] marked HLS stream %s to stop on heartbeat", streamID)
+			manager := h.hlsManager
+			time.AfterFunc(grace, func() {
+				if _, still := manager.GetSession(streamID); still {
+					log.Printf("[admin-ui] tearing down terminated HLS stream %s", streamID)
+					manager.CleanupSession(streamID)
+				}
+			})
 
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{

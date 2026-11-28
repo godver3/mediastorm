@@ -1150,6 +1150,15 @@ func (h *VideoHandler) StreamVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A playback stopped from the dashboard loses its stream even when the
+	// player ignores the heartbeat stop (older native builds): its next range
+	// request is refused.
+	if GetStreamTracker().PlaybackBlocked(r) {
+		log.Printf("[video] refusing stream for stopped playback path=%s", cleanPath)
+		http.Error(w, "Playback stopped", http.StatusGone)
+		return
+	}
+
 	if !h.enforceVODStreamLimits(w, r, cleanPath) {
 		return
 	}
