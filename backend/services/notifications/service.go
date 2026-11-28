@@ -134,7 +134,8 @@ func New(repo datastore.NotificationRepository, options ...Option) *Service {
 	s := &Service{
 		repo: repo,
 		httpClient: &http.Client{
-			Timeout: 10 * time.Second,
+			Timeout:       10 * time.Second,
+			CheckRedirect: sameHostRedirect,
 		},
 		deliveries:        make(chan delivery, 256),
 		stop:              make(chan struct{}),
@@ -1293,6 +1294,18 @@ func render(template string, values map[string]string) string {
 		result = strings.ReplaceAll(result, "{{"+key+"}}", values[key])
 	}
 	return strings.TrimSpace(result)
+}
+
+// sameHostRedirect refuses redirects that leave the configured webhook host, so
+// a destination cannot bounce deliveries to a different (e.g. internal) host.
+func sameHostRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 5 {
+		return errors.New("stopped after 5 redirects")
+	}
+	if !strings.EqualFold(req.URL.Host, via[0].URL.Host) {
+		return errors.New("webhook redirected to a different host")
+	}
+	return nil
 }
 
 func validateDestination(kind, rawURL string) error {
