@@ -1132,6 +1132,16 @@ func (h *AccountUIHandler) ChangePassword(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// A password change invalidates every other session for the account while
+	// keeping the one that performed the change.
+	if h.sessionsService != nil {
+		keepToken := ""
+		if cookie, err := r.Cookie(sessionCookieName); err == nil {
+			keepToken = cookie.Value
+		}
+		h.sessionsService.RevokeAllForAccountExcept(session.AccountID, keepToken)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "password changed"})
 }
