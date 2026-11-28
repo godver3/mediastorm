@@ -1301,6 +1301,14 @@ func (h *VideoHandler) streamViaProvider(w http.ResponseWriter, r *http.Request,
 					videoTracef("[video] range cache MISS: expanding %q to %q for path=%q", rangeHeader, expandedRange, cleanPath)
 
 					fetchCtx, fetchCancel := context.WithTimeout(context.Background(), 15*time.Second)
+					// Clear the in-flight marker even if the fetch panics.
+					fetchSettled := false
+					defer func() {
+						if !fetchSettled {
+							fetchCancel()
+							h.rangeCache.finishFetch(cleanPath, fetchStart)
+						}
+					}()
 					fetchResp, fetchErr := h.streamer.Stream(fetchCtx, streaming.Request{
 						Path:        cleanPath,
 						RangeHeader: expandedRange,
@@ -1324,6 +1332,7 @@ func (h *VideoHandler) streamViaProvider(w http.ResponseWriter, r *http.Request,
 						n, _ := io.ReadFull(fetchResp.Body, fetchBuf)
 						fetchResp.Close()
 						fetchCancel()
+						fetchSettled = true
 						h.rangeCache.finishFetch(cleanPath, fetchStart)
 						if !honoured {
 							log.Printf("[video] range cache SKIP: upstream ignored window path=%q want=%d status=%d got=%q — falling back to direct stream",
@@ -1351,6 +1360,7 @@ func (h *VideoHandler) streamViaProvider(w http.ResponseWriter, r *http.Request,
 						}
 					} else {
 						fetchCancel()
+						fetchSettled = true
 						h.rangeCache.finishFetch(cleanPath, fetchStart)
 						log.Printf("[video] range cache fetch failed: path=%q err=%v", cleanPath, fetchErr)
 					}
