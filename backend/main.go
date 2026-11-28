@@ -126,9 +126,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to load settings: %v", err)
 	}
-	applyRuntimeOverrides(&settings)
+	withoutRuntimeOverrides := applyRuntimeOverrides(&settings)
 	if config.MigrateGlobalLiveProxyToDefaultSource(&settings) {
-		if err := cfgManager.Save(settings); err != nil {
+		if err := cfgManager.Save(withoutRuntimeOverrides(settings)); err != nil {
 			log.Printf("warning: failed to persist global Live TV proxy migration: %v", err)
 		}
 	}
@@ -381,7 +381,7 @@ func main() {
 				log.Fatalf("failed to generate WebDAV password: %v", err)
 			}
 			settings.WebDAV.Password = webdavPass
-			if err := cfgManager.Save(settings); err != nil {
+			if err := cfgManager.Save(withoutRuntimeOverrides(settings)); err != nil {
 				log.Printf("warning: failed to save WebDAV password: %v", err)
 			}
 			fmt.Println("🔐 Generated WebDAV credentials and saved them to protected application settings")
@@ -412,7 +412,7 @@ func main() {
 			log.Fatalf("failed to generate Homepage API key: %v", err)
 		}
 		settings.Server.HomepageAPIKey = homepageKey
-		if err := cfgManager.Save(settings); err != nil {
+		if err := cfgManager.Save(withoutRuntimeOverrides(settings)); err != nil {
 			log.Printf("warning: failed to save Homepage API key: %v", err)
 		}
 		fmt.Println("🔐 Generated Homepage API key and saved it to protected application settings")
@@ -894,7 +894,7 @@ func main() {
 
 	// Best-effort save so the config persists the defaults
 	startupPhaseStarted = time.Now()
-	_ = cfgManager.Save(settings)
+	_ = cfgManager.Save(withoutRuntimeOverrides(settings))
 	log.Printf("[startup] phase=config-default-save duration=%s", time.Since(startupPhaseStarted))
 
 	// Recordings service is created early so its streaming provider can join the
@@ -1118,12 +1118,12 @@ func main() {
 	settingsHandler.SetClientSettingsBatch(clientSettingsService) // Enable client settings stripping
 	// The hourly update check exists only once presets do (an import adds it).
 	if qualityPresetService.InUse(context.Background()) && handlers.EnsureQualityPresetSyncTask(&settings) {
-		if err := cfgManager.Save(settings); err != nil {
+		if err := cfgManager.Save(withoutRuntimeOverrides(settings)); err != nil {
 			log.Printf("[main] failed to persist the quality preset sync task: %v", err)
 		}
 	}
 	if settingsHandler.EnsureEPGTaskForGuide(&settings, "startup") {
-		if err := cfgManager.Save(settings); err != nil {
+		if err := cfgManager.Save(withoutRuntimeOverrides(settings)); err != nil {
 			log.Printf("[main] failed to persist startup EPG refresh task backfill: %v", err)
 		} else {
 			log.Printf("[main] persisted startup EPG refresh task backfill")
