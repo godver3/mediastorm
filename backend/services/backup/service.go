@@ -125,6 +125,15 @@ func (s *Service) CreateBackup(backupType BackupType) (*BackupInfo, error) {
 	timestamp := time.Now().UTC().Format("20060102-150405")
 	filename := fmt.Sprintf("mediastorm_backup_%s.zip", timestamp)
 	backupPath := filepath.Join(s.backupDir, filename)
+	// Timestamps have one-second resolution; never overwrite an existing backup
+	// (e.g. a pre_restore backup taken in the same second as a scheduled one).
+	for n := 2; ; n++ {
+		if _, statErr := os.Stat(backupPath); os.IsNotExist(statErr) {
+			break
+		}
+		filename = fmt.Sprintf("mediastorm_backup_%s-%d.zip", timestamp, n)
+		backupPath = filepath.Join(s.backupDir, filename)
+	}
 
 	// Create temporary file first
 	tmpPath := backupPath + ".tmp"
@@ -688,6 +697,9 @@ func (s *Service) CleanupOldBackups() (int, error) {
 	if retention.RetentionDays > 0 {
 		cutoff := time.Now().UTC().AddDate(0, 0, -retention.RetentionDays)
 		for _, backup := range backups {
+			if backup.Type == BackupTypePreRestore {
+				continue // safety net taken before a restore; only deleted manually
+			}
 			if backup.CreatedAt.Before(cutoff) {
 				toDelete[backup.Filename] = true
 			}
@@ -695,10 +707,16 @@ func (s *Service) CleanupOldBackups() (int, error) {
 	}
 
 	// Apply retention count rule (keep newest N backups)
-	if retention.RetentionCount > 0 && len(backups) > retention.RetentionCount {
-		// Backups are already sorted newest first
-		for i := retention.RetentionCount; i < len(backups); i++ {
-			toDelete[backups[i].Filename] = true
+	// Backups are sorted newest first; pre_restore backups are never pruned and
+	// do not count against the limit.
+	kept := 0
+	for _, backup := range backups {
+		if backup.Type == BackupTypePreRestore {
+			continue
+		}
+		kept++
+		if retention.RetentionCount > 0 && kept > retention.RetentionCount {
+			toDelete[backup.Filename] = true
 		}
 	}
 
