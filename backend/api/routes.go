@@ -53,17 +53,6 @@ func directLoopbackOnlyMiddleware(next http.Handler) http.Handler {
 	}))
 }
 
-// devOnlyMiddleware restricts access to a local TCP peer.
-func devOnlyMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !requestsecurity.IsLoopback(r) {
-			http.Error(w, "Dev endpoints only accessible from allowed hosts", http.StatusForbidden)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
 const maxAPIRequestBodyBytes int64 = 32 << 20
 
 func apiSecurityMiddleware(next http.Handler) http.Handler {
@@ -771,7 +760,7 @@ func Register(
 	// Pprof debug endpoints for profiling (localhost only, no auth required for debugging)
 	// These are essential for diagnosing production issues and are safe since they're read-only
 	pprofRouter := api.PathPrefix("/debug/pprof").Subrouter()
-	pprofRouter.Use(localhostOnlyMiddleware)
+	pprofRouter.Use(directLoopbackOnlyMiddleware)
 	pprofRouter.HandleFunc("/", pprof.Index)
 	pprofRouter.HandleFunc("/cmdline", pprof.Cmdline)
 	pprofRouter.HandleFunc("/profile", pprof.Profile)
@@ -787,12 +776,12 @@ func Register(
 	// Dev tools (localhost + docker hostname only, no auth required)
 	devHandler := handlers.NewDevHandler("/root/mediastorm/docs")
 	devRouter := api.PathPrefix("/dev").Subrouter()
-	devRouter.Use(devOnlyMiddleware)
+	devRouter.Use(directLoopbackOnlyMiddleware)
 	devRouter.HandleFunc("/todo", devHandler.TodoEditor).Methods(http.MethodGet, http.MethodPost)
 
 	// Runtime stats endpoint (localhost only, no auth required for debugging)
 	runtimeRouter := api.PathPrefix("/debug/runtime").Subrouter()
-	runtimeRouter.Use(localhostOnlyMiddleware)
+	runtimeRouter.Use(directLoopbackOnlyMiddleware)
 	runtimeRouter.HandleFunc("", func(w http.ResponseWriter, r *http.Request) {
 		var m runtime.MemStats
 		runtime.ReadMemStats(&m)
