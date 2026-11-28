@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -514,5 +515,56 @@ func TestRestartServer_RespondsAcceptedAndSignals(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("expected process to be signalled, but it was not")
+	}
+}
+
+// Native players read in short range requests with idle gaps between them.
+// ActiveStreams (behind /api/homepage) must keep such a playback listed
+// through a gap while its heartbeat is fresh, as the admin dashboard does.
+func TestActiveStreams_ListsLingeringStreamWithFreshHeartbeat(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		heartbeat time.Duration
+		want      int
+	}{
+		{name: "fresh heartbeat", heartbeat: -2 * time.Second, want: 1},
+		{name: "stale heartbeat", heartbeat: -40 * time.Second, want: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			itemID := "tmdb:lingering-" + strings.ReplaceAll(tc.name, " ", "-")
+			handler := NewAdminHandler(NewHLSManager(t.TempDir(), "", "", nil))
+			handler.SetProgressService(&mockProgressService{
+				all: map[string][]models.PlaybackProgress{
+					"kids": {{
+						ID:        "movie:" + itemID,
+						MediaType: "movie",
+						ItemID:    itemID,
+						Position:  600,
+						Duration:  7200,
+						UpdatedAt: time.Now().Add(tc.heartbeat).UTC(),
+						MovieName: "Frozen",
+					}},
+				},
+			})
+
+			tracker := GetStreamTracker()
+			req := httptest.NewRequest(http.MethodGet,
+				"/stream?profileId=kids&profileName=Kids&mediaType=movie&itemId="+itemID+"&title=Frozen&movieName=Frozen",
+				nil)
+			streamID, bytesCounter, _ := tracker.StartStream(req, "/media/"+itemID+".mkv", 1000000, 0, 999999)
+			atomic.StoreInt64(bytesCounter, 50000)
+			tracker.EndStream(streamID) // range request finished; playback continues
+			defer tracker.TerminateStream(streamID)
+
+			got := 0
+			for _, s := range handler.ActiveStreams().Streams {
+				if s.ItemID == itemID {
+					got++
+				}
+			}
+			if got != tc.want {
+				t.Fatalf("ActiveStreams() listed %d streams for the lingering playback, want %d", got, tc.want)
+			}
+		})
 	}
 }

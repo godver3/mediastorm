@@ -416,8 +416,9 @@ func (h *AdminHandler) ActiveStreams() StreamsResponse {
 
 	// Collect all raw streams first
 	type rawStream struct {
-		info     StreamInfo
-		streamID string
+		info      StreamInfo
+		streamID  string
+		lingering bool
 	}
 	var rawStreams []rawStream
 
@@ -491,8 +492,17 @@ func (h *AdminHandler) ActiveStreams() StreamsResponse {
 
 	// Get direct streams from the global tracker
 	directCount := 0
+	// Lingering streams cover the idle gaps between a native player's short
+	// range requests; they are kept only while the playback heartbeat is fresh
+	// (checked below), matching the admin dashboard.
 	tracker := GetStreamTracker()
-	for _, stream := range tracker.GetActiveStreams() {
+	trackedStreams := tracker.GetActiveStreams()
+	lingeringIDs := make(map[string]bool)
+	for _, stream := range tracker.GetLingeringStreams() {
+		lingeringIDs[stream.ID] = true
+		trackedStreams = append(trackedStreams, stream)
+	}
+	for _, stream := range trackedStreams {
 		// Look up profile name if not set
 		profileName := stream.ProfileName
 		if profileName == "" && stream.ProfileID != "" {
@@ -528,7 +538,7 @@ func (h *AdminHandler) ActiveStreams() StreamsResponse {
 			LiveChannelLogo: stream.MediaMetadata.LiveChannelLogo,
 			ViaShareLink:    stream.ViaShareLink,
 		}
-		rawStreams = append(rawStreams, rawStream{info: info, streamID: stream.ID})
+		rawStreams = append(rawStreams, rawStream{info: info, streamID: stream.ID, lingering: lingeringIDs[stream.ID]})
 		directCount++
 	}
 
@@ -593,6 +603,10 @@ func (h *AdminHandler) ActiveStreams() StreamsResponse {
 			EpisodeName:   info.EpisodeName,
 			ExternalIDs:   info.ExternalIDs,
 		}, nameToUserID)
+		if rs.lingering && (matchedProgress == nil || matchedProgress.UpdatedAt.IsZero() ||
+			now.Sub(matchedProgress.UpdatedAt) > heartbeatEndedThreshold) {
+			continue
+		}
 
 		// Apply matched progress including media identification
 		if matchedProgress != nil {

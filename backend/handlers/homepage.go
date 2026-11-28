@@ -52,6 +52,7 @@ type HomepageStream struct {
 	Type            string    `json:"type"` // "hls" or "direct"
 	Filename        string    `json:"filename"`
 	ProfileName     string    `json:"profileName,omitempty"`
+	ProfileNames    []string  `json:"profileNames,omitempty"`
 	ClientIP        string    `json:"clientIp,omitempty"`
 	CreatedAt       time.Time `json:"createdAt"`
 	Duration        float64   `json:"duration,omitempty"`
@@ -359,6 +360,7 @@ func homepageStreamFromDashboard(source StreamInfo) HomepageStream {
 		Type:            source.Type,
 		Filename:        source.Filename,
 		ProfileName:     source.ProfileName,
+		ProfileNames:    source.ProfileNames,
 		ClientIP:        source.ClientIP,
 		CreatedAt:       source.CreatedAt,
 		Duration:        source.Duration,
