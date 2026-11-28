@@ -214,6 +214,9 @@ func (m *mockMetadataServiceStartup) MovieDetails(context.Context, models.MovieD
 func (m *mockMetadataServiceStartup) BatchMovieReleases(context.Context, []models.BatchMovieReleasesQuery) []models.BatchMovieReleasesItem {
 	return nil
 }
+func (m *mockMetadataServiceStartup) CachedMovieReleases(context.Context, []models.BatchMovieReleasesQuery) []models.BatchMovieReleasesItem {
+	return nil
+}
 func (m *mockMetadataServiceStartup) CollectionDetails(context.Context, int64) (*models.CollectionDetails, error) {
 	return nil, nil
 }

@@ -26,20 +26,23 @@ import (
 )
 
 type fakeMetadataService struct {
-	trendingResp          []models.TrendingItem
-	trendingErr           error
-	trendingByType        map[string][]models.TrendingItem
-	topTenByType          map[string][]models.TrendingItem
-	similarByKey          map[string][]models.Title
-	searchResp            []models.SearchResult
-	searchErr             error
-	youtubeResp           []models.YouTubeVideoSearchResult
-	youtubeErr            error
-	seriesResp            *models.SeriesDetails
-	seriesErr             error
-	movieResp             *models.Title
-	movieErr              error
-	batchMovieReleaseResp []models.BatchMovieReleasesItem
+	trendingResp            []models.TrendingItem
+	trendingErr             error
+	trendingByType          map[string][]models.TrendingItem
+	topTenByType            map[string][]models.TrendingItem
+	similarByKey            map[string][]models.Title
+	searchResp              []models.SearchResult
+	searchErr               error
+	youtubeResp             []models.YouTubeVideoSearchResult
+	youtubeErr              error
+	seriesResp              *models.SeriesDetails
+	seriesErr               error
+	movieResp               *models.Title
+	movieErr                error
+	batchMovieReleaseResp   []models.BatchMovieReleasesItem
+	cachedMovieReleaseResp  []models.BatchMovieReleasesItem
+	batchMovieReleaseCalls  int
+	cachedMovieReleaseCalls int
 
 	discoverByGenreResp  []models.TrendingItem
 	discoverByGenreTotal int
@@ -205,8 +208,21 @@ func (f *fakeMetadataService) BatchSeriesTitleFields(_ context.Context, queries 
 }
 
 func (f *fakeMetadataService) BatchMovieReleases(_ context.Context, queries []models.BatchMovieReleasesQuery) []models.BatchMovieReleasesItem {
+	f.batchMovieReleaseCalls++
 	if f.batchMovieReleaseResp != nil {
 		return f.batchMovieReleaseResp
+	}
+	results := make([]models.BatchMovieReleasesItem, len(queries))
+	for i, query := range queries {
+		results[i].Query = query
+	}
+	return results
+}
+
+func (f *fakeMetadataService) CachedMovieReleases(_ context.Context, queries []models.BatchMovieReleasesQuery) []models.BatchMovieReleasesItem {
+	f.cachedMovieReleaseCalls++
+	if f.cachedMovieReleaseResp != nil {
+		return f.cachedMovieReleaseResp
 	}
 	results := make([]models.BatchMovieReleasesItem, len(queries))
 	for i, query := range queries {
@@ -2521,5 +2537,71 @@ func TestMetadataHandler_TopTenWarmsEpisodeCountsWhenAsked(t *testing.T) {
 	}
 	if len(provider.warmed) != 1 || provider.warmed[0].TitleID != "tvdb:200" {
 		t.Fatalf("warmed = %#v, want the missing series", provider.warmed)
+	}
+}
+
+func TestMetadataHandler_SearchShowingUnreleasedUsesCachedReleaseWindowsOnly(t *testing.T) {
+	fake := &fakeMetadataService{
+		searchResp: []models.SearchResult{
+			{Score: 100, Title: models.Title{Name: "Cached", MediaType: "movie", TMDBID: 100, Status: models.MovieReleaseStatusTheatrical}},
+			{Score: 90, Title: models.Title{Name: "Uncached", MediaType: "movie", TMDBID: 200, Status: models.MovieReleaseStatusTheatrical}},
+		},
+		cachedMovieReleaseResp: []models.BatchMovieReleasesItem{
+			{Status: models.MovieReleaseStatusReleased, HomeRelease: &models.Release{Type: "digital", Date: "2026-01-01"}},
+			{Status: models.MovieReleaseStatusUnknown}, // cache miss
+		},
+	}
+	handler := NewMetadataHandler(fake, testConfigManager(t))
+	handler.SetUserSettingsProvider(fakeUnreleasedVisibilityUserSettings{settings: &models.UserSettings{
+		Display: models.DisplaySettings{IncludeUnreleasedMoviesInSearch: models.BoolPtr(true)},
+	}})
+	req := httptest.NewRequest(http.MethodGet, "/api/search?q=release&type=all&userId=user1", nil)
+	rec := httptest.NewRecorder()
+
+	handler.Search(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+	if fake.batchMovieReleaseCalls != 0 || fake.cachedMovieReleaseCalls != 1 {
+		t.Fatalf("batch calls=%d cached calls=%d, want 0 and 1", fake.batchMovieReleaseCalls, fake.cachedMovieReleaseCalls)
+	}
+	var payload []models.SearchResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if len(payload) != 2 {
+		t.Fatalf("expected both movies, got %d", len(payload))
+	}
+	byName := map[string]models.Title{}
+	for _, result := range payload {
+		byName[result.Title.Name] = result.Title
+	}
+	if got := byName["Cached"]; got.HomeRelease == nil || got.Status != models.MovieReleaseStatusReleased {
+		t.Fatalf("cached windows not applied: %+v", got)
+	}
+	if got := byName["Uncached"]; got.Status != models.MovieReleaseStatusTheatrical {
+		t.Fatalf("cache miss must keep existing status, got %q", got.Status)
+	}
+}
+
+func TestMetadataHandler_DiscoverShowingUnreleasedSkipsProviderLookup(t *testing.T) {
+	fake := &fakeMetadataService{
+		discoverByGenreResp: []models.TrendingItem{
+			{Title: models.Title{Name: "Movie", MediaType: "movie", TMDBID: 100}},
+		},
+		discoverByGenreTotal: 1,
+	}
+	handler := NewMetadataHandler(fake, testConfigManager(t))
+	req := httptest.NewRequest(http.MethodGet, "/api/discover/genre?type=movie&genreId=28", nil)
+	rec := httptest.NewRecorder()
+
+	handler.DiscoverByGenre(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+	if fake.batchMovieReleaseCalls != 0 || fake.cachedMovieReleaseCalls != 1 {
+		t.Fatalf("batch calls=%d cached calls=%d, want 0 and 1", fake.batchMovieReleaseCalls, fake.cachedMovieReleaseCalls)
 	}
 }

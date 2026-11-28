@@ -233,8 +233,9 @@ func (h *MetadataHandler) writePersonalizedRecommendations(
 		requestClientID(r),
 		unreleasedVisibilityLists,
 	)
-	// Always load release windows: release badges need them even when unreleased titles are shown.
-	enrichTrendingMovieReleaseVisibility(r.Context(), response.Items, service)
+	// Hiding unreleased movies needs accurate windows, so fetch them; otherwise
+	// badges use cached windows only and misses are warmed in the background.
+	enrichTrendingMovieReleaseVisibility(r.Context(), response.Items, service, !policy.IncludeMovies)
 	movieReleases := make(map[int64]models.Title, len(response.Items))
 	for i := range response.Items {
 		if response.Items[i].Title.TMDBID > 0 && strings.EqualFold(response.Items[i].Title.MediaType, "movie") {

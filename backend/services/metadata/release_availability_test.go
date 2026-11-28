@@ -2,6 +2,7 @@ package metadata
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"strconv"
@@ -189,5 +190,78 @@ func TestGetCachedSeriesReleaseReadsCacheRelativeToNow(t *testing.T) {
 	}
 	if status, date := svc.GetCachedSeriesRelease(0, 99); status != "" || date != "" {
 		t.Fatalf("uncached: %q %q", status, date)
+	}
+}
+
+func TestCachedMovieReleasesUsesCacheAndQueuesMissesWithoutBlocking(t *testing.T) {
+	release := make(chan struct{})
+	var requests int32
+	httpc := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		atomic.AddInt32(&requests, 1)
+		<-release // a blocked upstream must not delay the caller
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(bytes.NewBufferString(`{"results":[],"release_dates":{"results":[]}}`)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+	cache := newFileCache(t.TempDir(), 24)
+	svc := &Service{cache: cache, tmdb: newTMDBClient("test-key", "en-US", httpc, cache)}
+	svc.releaseWarm.enabled = true
+	homeDate := time.Now().AddDate(0, 0, -10).Format("2006-01-02")
+	if err := cache.set(cacheKey("tmdb", "movie", "releases", "v3", "42"), cachedReleasesWithCert{
+		Releases: []models.Release{{Type: "digital", Date: homeDate}},
+	}); err != nil {
+		t.Fatalf("seed cache: %v", err)
+	}
+
+	queries := []models.BatchMovieReleasesQuery{
+		{TitleID: "tmdb:movie:42", TMDBID: 42},
+		{TitleID: "tmdb:movie:43"}, // TMDB ID parsed from the title ID
+		{TMDBID: 43},               // duplicate miss
+		{IMDBID: "tt0000001"},      // IMDB-only: never resolved upstream
+	}
+	done := make(chan []models.BatchMovieReleasesItem, 1)
+	go func() { done <- svc.CachedMovieReleases(context.Background(), queries) }()
+	var items []models.BatchMovieReleasesItem
+	select {
+	case items = <-done:
+	case <-time.After(2 * time.Second):
+		close(release)
+		t.Fatal("CachedMovieReleases blocked on upstream")
+	}
+
+	if len(items) != len(queries) {
+		t.Fatalf("got %d items, want %d", len(items), len(queries))
+	}
+	if items[0].HomeRelease == nil || items[0].Status != models.MovieReleaseStatusReleased {
+		t.Fatalf("cache hit not used: %+v", items[0])
+	}
+	for i := 1; i < len(items); i++ {
+		if items[i].Status != models.MovieReleaseStatusUnknown || items[i].HomeRelease != nil || items[i].Query != queries[i] {
+			t.Fatalf("miss %d = %+v, want unknown with query echoed", i, items[i])
+		}
+	}
+	svc.releaseWarm.mu.Lock()
+	_, queued := svc.releaseWarm.inflight[43]
+	inflight := len(svc.releaseWarm.inflight)
+	svc.releaseWarm.mu.Unlock()
+	if !queued || inflight != 1 {
+		t.Fatalf("expected only tmdb 43 queued once, inflight=%d queued=%v", inflight, queued)
+	}
+
+	close(release)
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		svc.releaseWarm.mu.Lock()
+		n := len(svc.releaseWarm.inflight)
+		svc.releaseWarm.mu.Unlock()
+		if n == 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if n := atomic.LoadInt32(&requests); n < 1 {
+		t.Fatalf("expected the background fill to reach upstream, got %d requests", n)
 	}
 }
