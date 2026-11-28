@@ -860,7 +860,15 @@ func main() {
 		calendarService.LoadPersisted(calendarLoadCtx)
 		cancelCalendarLoad()
 	}
-	notificationService := notifications.New(store.Notifications(), notifications.WithProfiles(userService), notifications.WithClients(clientsService))
+	notificationService := notifications.New(store.Notifications(), notifications.WithProfiles(userService), notifications.WithClients(clientsService),
+		notifications.WithMasterCheck(func(profileID string) bool {
+			profile, ok := userService.Get(profileID)
+			if !ok {
+				return false
+			}
+			account, ok := accountsService.Get(profile.AccountID)
+			return ok && account.IsMaster
+		}))
 	defer notificationService.Close()
 	calendarService.SetReleaseObserver(notificationService)
 	historyService.SetWatchStateChangedHook(calendarService.Invalidate)

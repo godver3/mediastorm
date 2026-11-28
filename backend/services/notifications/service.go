@@ -108,14 +108,28 @@ func WithClients(clients clientProvider) Option {
 	return func(s *Service) { s.clients = clients }
 }
 
+// WithMasterCheck supplies the lookup used to decide whether a profile belongs
+// to a master (admin) account. Generic webhook channels are only delivered for
+// such profiles.
+func WithMasterCheck(fn func(profileID string) bool) Option {
+	return func(s *Service) { s.profileIsMaster = fn }
+}
+
+// ErrGenericWebhookAdminOnly is returned when a non-admin account tries to use
+// a generic webhook channel.
+var ErrGenericWebhookAdminOnly = errors.New("generic webhooks can only be managed by an administrator; use a Discord destination instead")
+
 // Service owns profile notification configuration, formatting, and delivery.
 type Service struct {
-	profiles   profileProvider
-	clients    clientProvider
-	repo       datastore.NotificationRepository
-	httpClient *http.Client
-	deliveries chan delivery
-	stop       chan struct{}
+	profiles profileProvider
+	clients  clientProvider
+	// profileIsMaster reports whether a profile's owning account is a master
+	// account. Nil means every profile is allowed generic webhooks.
+	profileIsMaster func(profileID string) bool
+	repo            datastore.NotificationRepository
+	httpClient      *http.Client
+	deliveries      chan delivery
+	stop            chan struct{}
 
 	sessionMu sync.Mutex
 	sessions  map[string]playbackSession
@@ -950,6 +964,11 @@ func (s *Service) pruneProgressDeliveries() {
 }
 
 func (s *Service) deliver(ctx context.Context, channel models.NotificationChannel, event models.NotificationEvent) error {
+	if channel.Type == models.NotificationChannelWebhook && s.profileIsMaster != nil && !s.profileIsMaster(channel.ProfileID) {
+		log.Printf("[notifications] skipping generic webhook channel %s: only administrator accounts may use generic webhooks (profile=%s)",
+			channel.ID, channel.ProfileID)
+		return nil
+	}
 	event = s.withDeviceName(s.withProfileName(channel, event))
 	title, body := Format(channel, event)
 	var payload any
