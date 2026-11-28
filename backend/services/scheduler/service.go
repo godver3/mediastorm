@@ -10,6 +10,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -136,15 +137,28 @@ func (s *Service) Start(ctx context.Context) error {
 		return nil
 	}
 
-	s.ctx, s.cancel = context.WithCancel(ctx)
+	loopCtx, cancel := context.WithCancel(ctx)
+	s.ctx, s.cancel = loopCtx, cancel
 	s.running = true
 
 	// Start the main scheduler loop
 	s.wg.Add(1)
-	go s.schedulerLoop()
+	go s.schedulerLoop(loopCtx)
 
 	log.Println("[scheduler] Scheduler service started")
 	return nil
+}
+
+// taskContext returns the scheduler's context for task execution. It is never
+// nil: before Start it is context.Background() (manual runs), after Stop it is
+// the cancelled scheduler context.
+func (s *Service) taskContext() context.Context {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.ctx == nil {
+		return context.Background()
+	}
+	return s.ctx
 }
 
 // Stop gracefully stops the scheduler
@@ -154,7 +168,8 @@ func (s *Service) Stop(ctx context.Context) error {
 	cancel := s.cancel
 	if wasRunning {
 		s.running = false
-		s.ctx = nil
+		// Keep s.ctx: it is cancelled below, so tasks still holding or later
+		// reading it see a cancelled context instead of a nil one.
 		s.cancel = nil
 	}
 	s.mu.Unlock()
@@ -183,7 +198,7 @@ func (s *Service) Stop(ctx context.Context) error {
 }
 
 // schedulerLoop is the main background loop that checks for tasks to run
-func (s *Service) schedulerLoop() {
+func (s *Service) schedulerLoop(ctx context.Context) {
 	defer s.wg.Done()
 
 	// Load check interval from settings
@@ -206,7 +221,7 @@ func (s *Service) schedulerLoop() {
 
 	for {
 		select {
-		case <-s.ctx.Done():
+		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			s.checkAndRunTasks()
@@ -329,6 +344,15 @@ func (s *Service) executeTask(task config.ScheduledTask) {
 		s.taskMu.Lock()
 		delete(s.taskRunning, task.ID)
 		s.taskMu.Unlock()
+	}()
+	// A panicking task must not take down the whole process. Log it, record the
+	// task as failed and let the deferred cleanup above free the running slot so
+	// it reschedules normally.
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[scheduler] Task %s (%s) panicked: %v\n%s", task.Name, task.Type, r, debug.Stack())
+			s.updateTaskStatus(task.ID, fmt.Errorf("task panicked: %v", r), SyncResult{})
+		}
 	}()
 
 	log.Printf("[scheduler] Executing task: %s (%s)", task.Name, task.Type)
@@ -4220,8 +4244,8 @@ func (s *Service) SetQualityPresetSyncer(syncer QualityPresetSyncer) {
 func (s *Service) executeQualityPresetSync(task config.ScheduledTask) (SyncResult, error) {
 	s.mu.RLock()
 	syncer := s.qualityPresets
-	ctx := s.ctx
 	s.mu.RUnlock()
+	ctx := s.taskContext()
 	if syncer == nil {
 		return SyncResult{}, errors.New("quality preset service not configured")
 	}
@@ -4250,7 +4274,7 @@ func (s *Service) executePrewarm(task config.ScheduledTask) (SyncResult, error) 
 		return SyncResult{}, errors.New("prewarm service not configured")
 	}
 
-	prewarmResult, err := s.prewarmService.RunOnceWithConfig(s.ctx, task.Config)
+	prewarmResult, err := s.prewarmService.RunOnceWithConfig(s.taskContext(), task.Config)
 	if err != nil {
 		return SyncResult{}, fmt.Errorf("prewarm failed: %w", err)
 	}
