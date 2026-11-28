@@ -80,8 +80,6 @@ var browserFriendlyMp4VideoCodecs = map[string]struct{}{
 	"mpeg4": {},
 }
 
-var legacyAudioWhitelist = []string{"aac", "ac3", "eac3", "mp3"}
-
 const ffprobeTimeout = 15 * time.Second
 const providerProbeSampleBytes int64 = 16 * 1024 * 1024
 
@@ -2086,11 +2084,18 @@ func (h *VideoHandler) streamWithTransmuxProvider(w http.ResponseWriter, r *http
 		return false, fmt.Errorf("ffmpeg start: %w", err)
 	}
 
+	var stderrTail atomic.Value
+	stderrDone := make(chan struct{})
 	go func() {
 		if plan.container != outputMpegTs {
+			// -loglevel error keeps this small; the tail explains a failed exit.
+			data, _ := io.ReadAll(io.LimitReader(stderr, 64<<10))
 			_, _ = io.Copy(io.Discard, stderr)
+			stderrTail.Store(strings.TrimSpace(string(data)))
+			close(stderrDone)
 			return
 		}
+		defer close(stderrDone)
 		// The DLNA arm is the only one that re-encodes video, so surface encoder
 		// failures instead of silently serving a stream the renderer drops.
 		buf := make([]byte, 4096)
@@ -2185,6 +2190,13 @@ func (h *VideoHandler) streamWithTransmuxProvider(w http.ResponseWriter, r *http
 
 	if err := cmd.Wait(); err != nil {
 		if !strings.Contains(strings.ToLower(err.Error()), "signal") && !strings.Contains(strings.ToLower(err.Error()), "broken pipe") {
+			<-stderrDone
+			if tail, _ := stderrTail.Load().(string); tail != "" {
+				if len(tail) > 600 {
+					tail = tail[len(tail)-600:]
+				}
+				return started, fmt.Errorf("ffmpeg wait: %w: %s", err, tail)
+			}
 			return started, fmt.Errorf("ffmpeg wait: %w", err)
 		}
 	}
@@ -2916,7 +2928,7 @@ func (h *VideoHandler) buildTransmuxPlan(meta *ffprobeOutput, inputSpecifier str
 
 	plan.audio = determineAudioPlan(meta, forceAAC)
 	plan.movflags = computeMovflags(plan.audio)
-	plan.args = buildArgsWithProbe(inputSpecifier, plan.videoMap, plan.audio, plan.movflags, plan.videoCodec, plan.hasDolbyVision, plan.dolbyVisionProfile)
+	plan.args = buildArgsWithProbe(inputSpecifier, plan.videoMap, plan.audio, textSubtitleMaps(meta), plan.movflags, plan.videoCodec, plan.hasDolbyVision, plan.dolbyVisionProfile)
 	plan.duration = parseFloat(meta.Format.Duration)
 	return plan
 }
@@ -3066,7 +3078,7 @@ func determineAudioPlanWithLanguage(meta *ffprobeOutput, forceAAC bool, preferre
 	return audioPlan{mode: audioPlanTranscode, stream: firstAudio, reason: fmt.Sprintf("audio codec %s requires transcoding", codec)}
 }
 
-func buildArgsWithProbe(inputURL, videoMap string, plan audioPlan, movflags string, videoCodec string, hasDV bool, dvProfile string) []string {
+func buildArgsWithProbe(inputURL, videoMap string, plan audioPlan, subtitleMaps []string, movflags string, videoCodec string, hasDV bool, dvProfile string) []string {
 	args := []string{"-nostdin", "-loglevel", "error", "-i", inputURL}
 
 	if strings.TrimSpace(videoMap) == "" {
@@ -3081,7 +3093,12 @@ func buildArgsWithProbe(inputURL, videoMap string, plan audioPlan, movflags stri
 
 	// Map text-based subtitle streams that can be converted to mov_text
 	// Skip bitmap-based subtitles (pgs, dvdsub, etc.) as they can't be embedded in MP4
-	args = append(args, "-map", "0:s:m:codec_name:subrip?", "-map", "0:s:m:codec_name:ass?", "-map", "0:s:m:codec_name:ssa?", "-map", "0:s:m:codec_name:mov_text?", "-dn", "-c:v", "copy")
+	// (by stream index from the probe: "0:s:m:codec_name:..." is a metadata-tag
+	// specifier, matches nothing, and current ffmpeg rejects it even with "?").
+	for _, m := range subtitleMaps {
+		args = append(args, "-map", m)
+	}
+	args = append(args, "-dn", "-c:v", "copy")
 
 	if shouldTagHevcAsHvc1(videoCodec) {
 		if hasDV {
@@ -3117,8 +3134,9 @@ func buildArgsWithProbe(inputURL, videoMap string, plan audioPlan, movflags stri
 	}
 
 	// Convert text-based subtitles to mov_text for MP4 compatibility
-	// This will only apply to subtitles that were successfully mapped above
-	args = append(args, "-c:s", "mov_text", "-disposition:s", "0")
+	if len(subtitleMaps) > 0 {
+		args = append(args, "-c:s", "mov_text", "-disposition:s", "0")
+	}
 
 	if strings.TrimSpace(movflags) == "" {
 		movflags = computeMovflags(plan)
@@ -3127,27 +3145,32 @@ func buildArgsWithProbe(inputURL, videoMap string, plan audioPlan, movflags stri
 	return args
 }
 
+// textSubtitleMaps returns "-map" targets for the text subtitle streams that
+// can be converted to mov_text; bitmap tracks (PGS, DVD) cannot go into MP4.
+func textSubtitleMaps(meta *ffprobeOutput) []string {
+	if meta == nil {
+		return nil
+	}
+	var maps []string
+	for _, st := range meta.Streams {
+		if !strings.EqualFold(st.CodecType, "subtitle") {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(st.CodecName)) {
+		case "subrip", "srt", "ass", "ssa", "mov_text", "webvtt", "text":
+			maps = append(maps, fmt.Sprintf("0:%d", st.Index))
+		}
+	}
+	return maps
+}
+
 func buildLegacyArgs(inputURL, movflags string, forceAAC bool, videoCodec string, hasDV bool, dvProfile string) []string {
 	args := []string{"-nostdin", "-loglevel", "error", "-i", inputURL, "-map", "0:v"}
-	if forceAAC {
-		// Map all audio streams for AAC mode
-		args = append(args, "-map", "0:a")
-	} else {
-		for _, codec := range legacyAudioWhitelist {
-			args = append(args, "-map", fmt.Sprintf("0:a:m:codec_name:%s?", codec))
-		}
-		args = append(args,
-			"-map", "-0:a:m:codec_name:truehd",
-			"-map", "-0:a:m:codec_name:dts",
-		)
-	}
-	// Map text-based subtitle streams that can be converted to mov_text
-	// Skip bitmap-based subtitles (pgs, dvdsub, etc.) as they can't be embedded in MP4
+	// Without a probe the codecs are unknown, so map the first audio stream
+	// (if any) and always transcode it to AAC, which MP4 accepts; subtitles
+	// are left out because a bitmap track would fail the MP4 muxer.
+	args = append(args, "-map", "0:a:0?")
 	args = append(args,
-		"-map", "0:s:m:codec_name:subrip?",
-		"-map", "0:s:m:codec_name:ass?",
-		"-map", "0:s:m:codec_name:ssa?",
-		"-map", "0:s:m:codec_name:mov_text?",
 		"-dn",
 		"-c:v", "copy",
 	)
@@ -3160,15 +3183,7 @@ func buildLegacyArgs(inputURL, movflags string, forceAAC bool, videoCodec string
 			args = append(args, "-tag:v", "hvc1")
 		}
 	}
-	if forceAAC {
-		// Transcode first audio to AAC, copy others
-		args = append(args, "-c:a:0", "aac", "-b:a:0", "192k", "-c:a:1", "copy")
-	} else {
-		args = append(args, "-c:a", "copy")
-	}
-	// Convert text-based subtitles to mov_text for MP4 compatibility
-	// This will only apply to subtitles that were successfully mapped above
-	args = append(args, "-c:s", "mov_text", "-disposition:s", "0")
+	args = append(args, "-c:a", "aac", "-b:a", "192k")
 	if strings.TrimSpace(movflags) == "" {
 		movflags = strings.Join([]string{"frag_keyframe", "separate_moof", "omit_tfhd_offset", "default_base_moof", "empty_moov"}, "+")
 	}
