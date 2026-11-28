@@ -268,6 +268,14 @@ func (c *RealDebridClient) doWithRetry(req *http.Request, maxRetries int) (*http
 	return resp, nil
 }
 
+// replayBody reads from a replay reader but closes the original body.
+type replayBody struct {
+	io.Reader
+	closer io.Closer
+}
+
+func (b *replayBody) Close() error { return b.closer.Close() }
+
 // shouldRetryError determines if an HTTP response should be retried.
 // Returns (shouldRetry, reason) where reason describes why we're retrying.
 func (c *RealDebridClient) shouldRetryError(resp *http.Response) (bool, string) {
@@ -283,10 +291,10 @@ func (c *RealDebridClient) shouldRetryError(resp *http.Response) (bool, string) 
 			return false, ""
 		}
 		// Restore the body for the caller
-		resp.Body = io.NopCloser(io.MultiReader(
-			strings.NewReader(string(bodyBytes)),
-			resp.Body,
-		))
+		resp.Body = &replayBody{
+			Reader: io.MultiReader(strings.NewReader(string(bodyBytes)), resp.Body),
+			closer: resp.Body,
+		}
 
 		// Check if this is a "hoster_unavailable" error (error_code 19)
 		var errorResp ErrorResponse
