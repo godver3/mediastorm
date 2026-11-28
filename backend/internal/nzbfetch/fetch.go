@@ -3,6 +3,7 @@
 package nzbfetch
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"errors"
@@ -19,6 +20,7 @@ import (
 	"novastream/internal/httpheaders"
 	"novastream/internal/providerbreaker"
 	"novastream/models"
+	"novastream/services/indexer"
 )
 
 const (
@@ -275,6 +277,27 @@ func (f *Fetcher) download(ctx context.Context, client *http.Client, breaker *pr
 	if len(data) == 0 || len(data) > maxNZBSize {
 		return payload{}, fmt.Errorf("NZB response is empty or exceeds 50 MiB")
 	}
+	// Indexers answer limit/auth failures with an HTTP 200 <error> document;
+	// that is not an NZB, so never cache it or count it as a success.
+	if msg, isErr := newznabErrorDoc(data); isErr {
+		if indexer.NewznabErrorTripsBreaker(data) {
+			breaker.RecordRateLimit(provider, 0)
+		}
+		return payload{}, fmt.Errorf("NZB download from %s (%s) returned an error: %s", provider, redactURL(downloadURL), msg)
+	}
 	breaker.RecordSuccess(provider, probe)
 	return payload{data: data, header: resp.Header.Clone(), at: time.Now()}, nil
+}
+
+// newznabErrorDoc checks the start of the body for an <error> root before
+// parsing, so real NZBs (up to 50 MiB) are not decoded twice.
+func newznabErrorDoc(data []byte) (string, bool) {
+	head := data
+	if len(head) > 1024 {
+		head = head[:1024]
+	}
+	if !bytes.Contains(bytes.ToLower(head), []byte("<error")) {
+		return "", false
+	}
+	return indexer.ParseNewznabError(data)
 }
