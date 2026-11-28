@@ -14,12 +14,13 @@ import (
 )
 
 type recordingPrequeueRepository struct {
-	mu         sync.Mutex
-	upsertIDs  []string
-	deletedIDs []string
-	listBlobs  [][]byte
-	listFunc   func(context.Context) ([][]byte, error)
-	listCalls  int
+	mu             sync.Mutex
+	upsertIDs      []string
+	deletedIDs     []string
+	listBlobs      [][]byte
+	listFunc       func(context.Context) ([][]byte, error)
+	listCalls      int
+	deleteAllCalls int
 }
 
 func (r *recordingPrequeueRepository) Get(context.Context, string) ([]byte, error) {
@@ -58,6 +59,13 @@ func (r *recordingPrequeueRepository) Delete(_ context.Context, id string) error
 
 func (r *recordingPrequeueRepository) DeleteExpired(context.Context) (int64, error) {
 	return 0, nil
+}
+
+func (r *recordingPrequeueRepository) DeleteAll(context.Context) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.deleteAllCalls++
+	return nil
 }
 
 func (r *recordingPrequeueRepository) Count(context.Context) (int64, error) {

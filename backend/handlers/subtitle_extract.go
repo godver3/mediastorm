@@ -40,8 +40,8 @@ type SubtitleExtractSession struct {
 	mu             sync.Mutex
 	extractionDone bool
 	extractionErr  error
-	FirstCueTime   float64 // Time of first extracted cue (for subtitle sync)
-	firstCueParsed bool    // Internal: tracks if we've parsed the first cue
+	FirstCueTime   float64        // Time of first extracted cue (for subtitle sync)
+	firstCueParsed bool           // Internal: tracks if we've parsed the first cue
 	batch          *subtitleBatch // Non-nil for pre-extraction sessions sharing one ffmpeg/output dir
 }
 

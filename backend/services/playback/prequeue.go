@@ -1311,8 +1311,17 @@ func (s *PrequeueStore) DeleteAll() {
 		delete(s.entries, id)
 	}
 	s.byTitleUser = make(map[string]string)
+	s.streamPathValidated = make(map[string]time.Time)
 	s.generation.Add(1)
-	s.saveToDisk()
+	if s.useDB() {
+		// saveToDB only upserts, so rows must be removed explicitly or the
+		// cleared prequeue returns after a restart.
+		if err := s.repo.DeleteAll(context.Background()); err != nil {
+			log.Printf("[prequeue] Warning: failed to delete all entries from DB: %v", err)
+		}
+	} else {
+		s.saveToDisk()
+	}
 	log.Printf("[prequeue] Cleared all prequeue entries")
 }
 
@@ -1338,6 +1347,7 @@ func (s *PrequeueStore) DeleteByUser(userID string) {
 		if s.byTitleUser[key] == id {
 			delete(s.byTitleUser, key)
 		}
+		s.removeStreamPathValidationsLocked(id)
 
 		delete(s.entries, id)
 
@@ -1395,6 +1405,7 @@ func (s *PrequeueStore) cleanup() {
 		if s.byTitleUser[key] == id {
 			delete(s.byTitleUser, key)
 		}
+		s.removeStreamPathValidationsLocked(id)
 
 		delete(s.entries, id)
 		log.Printf("[prequeue] Expired and removed prequeue %s", id)

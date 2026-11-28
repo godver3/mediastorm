@@ -91,6 +91,13 @@ func (r *pgPrequeueRepo) DeleteExpired(ctx context.Context) (int64, error) {
 	return tag.RowsAffected(), nil
 }
 
+func (r *pgPrequeueRepo) DeleteAll(ctx context.Context) error {
+	if _, err := r.pool.Exec(ctx, `DELETE FROM prequeue`); err != nil {
+		return fmt.Errorf("delete all prequeue: %w", err)
+	}
+	return nil
+}
+
 func (r *pgPrequeueRepo) Count(ctx context.Context) (int64, error) {
 	var count int64
 	err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM prequeue`).Scan(&count)
