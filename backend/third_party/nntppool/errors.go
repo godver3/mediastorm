@@ -8,6 +8,8 @@ import (
 	"syscall"
 
 	"golang.org/x/text/transform"
+
+	"github.com/javi11/nntppool/v2/pkg/nntpcli"
 )
 
 var (
@@ -61,13 +63,26 @@ func isRetryableError(err error) bool {
 	}
 
 	var nntpErr *textproto.Error
-	if ok := errors.As(err, &nntpErr); ok {
-		for _, r := range retirableErrors {
-			if nntpErr.Code == r {
-				return true
-			}
-		}
+	if ok := errors.As(err, &nntpErr); ok && isRetirableCode(nntpErr.Code) {
+		return true
 	}
 
+	// The vendored nntpcli reports server status lines as *nntpcli.NNTPError,
+	// not *textproto.Error. Without this check a 430 from the first provider is
+	// never retried, so the pool never falls over to the next provider.
+	var cliErr *nntpcli.NNTPError
+	if ok := errors.As(err, &cliErr); ok && isRetirableCode(cliErr.Code) {
+		return true
+	}
+
+	return false
+}
+
+func isRetirableCode(code int) bool {
+	for _, r := range retirableErrors {
+		if code == r {
+			return true
+		}
+	}
 	return false
 }
