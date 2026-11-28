@@ -423,64 +423,62 @@ func (s *Service) enrichSyncedWatchlistArtwork(task config.ScheduledTask) {
 
 // updateTaskStatus updates a task's status in the settings file
 func (s *Service) updateTaskStatus(taskID string, err error, result SyncResult) {
-	settings, loadErr := s.configManager.Load()
-	if loadErr != nil {
-		log.Printf("[scheduler] Failed to load settings to update task status: %v", loadErr)
-		return
+	// Dry-run details live in their own file; write them outside the settings
+	// lock held by Update below.
+	if result.DryRun {
+		details := &config.DryRunDetails{ToAdd: result.ToAdd, ToRemove: result.ToRemove}
+		if saveErr := s.configManager.SaveDryRunDetails(taskID, details); saveErr != nil {
+			log.Printf("[scheduler] Failed to store dry run details for %s: %v", taskID, saveErr)
+		}
+	} else {
+		_ = s.configManager.SaveDryRunDetails(taskID, nil)
 	}
 
 	now := time.Now().UTC()
-	for i := range settings.ScheduledTasks.Tasks {
-		if settings.ScheduledTasks.Tasks[i].ID == taskID {
-			settings.ScheduledTasks.Tasks[i].LastRunAt = &now
-			settings.ScheduledTasks.Tasks[i].ItemsImported = result.Count
-			if err == nil && !result.DryRun && result.Config != nil {
-				if settings.ScheduledTasks.Tasks[i].Config == nil {
-					settings.ScheduledTasks.Tasks[i].Config = make(map[string]string)
+	// Load+mutate+save under the manager's lock so concurrent writers (other
+	// tasks, token refreshes) cannot lose this update or be overwritten by it.
+	if updErr := s.configManager.Update(func(settings *config.Settings) error {
+		for i := range settings.ScheduledTasks.Tasks {
+			if settings.ScheduledTasks.Tasks[i].ID == taskID {
+				settings.ScheduledTasks.Tasks[i].LastRunAt = &now
+				settings.ScheduledTasks.Tasks[i].ItemsImported = result.Count
+				if err == nil && !result.DryRun && result.Config != nil {
+					if settings.ScheduledTasks.Tasks[i].Config == nil {
+						settings.ScheduledTasks.Tasks[i].Config = make(map[string]string)
+					}
+					for key, value := range result.Config {
+						settings.ScheduledTasks.Tasks[i].Config[key] = value
+					}
 				}
-				for key, value := range result.Config {
-					settings.ScheduledTasks.Tasks[i].Config[key] = value
-				}
-			}
 
-			// Store dry run details if this was a dry run
-			if result.DryRun {
-				details := &config.DryRunDetails{ToAdd: result.ToAdd, ToRemove: result.ToRemove}
-				if saveErr := s.configManager.SaveDryRunDetails(taskID, details); saveErr != nil {
-					log.Printf("[scheduler] Failed to store dry run details for %s: %v", taskID, saveErr)
-				}
-				settings.ScheduledTasks.Tasks[i].HasDryRunDetails = true
-			} else {
-				// Clear dry run details for real runs
-				_ = s.configManager.SaveDryRunDetails(taskID, nil)
-				settings.ScheduledTasks.Tasks[i].HasDryRunDetails = false
-			}
+				settings.ScheduledTasks.Tasks[i].HasDryRunDetails = result.DryRun
 
-			if err != nil {
-				settings.ScheduledTasks.Tasks[i].LastStatus = config.ScheduledTaskStatusError
-				settings.ScheduledTasks.Tasks[i].LastError = err.Error()
-				log.Printf("[scheduler] Task %s failed: %v", taskID, err)
-			} else {
-				settings.ScheduledTasks.Tasks[i].LastStatus = config.ScheduledTaskStatusSuccess
-				settings.ScheduledTasks.Tasks[i].LastError = ""
-				if result.DryRun {
-					log.Printf("[scheduler] Task %s dry run completed: %d items to add, %d items to remove", taskID, len(result.ToAdd), len(result.ToRemove))
+				if err != nil {
+					settings.ScheduledTasks.Tasks[i].LastStatus = config.ScheduledTaskStatusError
+					settings.ScheduledTasks.Tasks[i].LastError = err.Error()
+					log.Printf("[scheduler] Task %s failed: %v", taskID, err)
 				} else {
-					log.Printf("[scheduler] Task %s completed successfully, processed %d changes", taskID, result.Count)
+					settings.ScheduledTasks.Tasks[i].LastStatus = config.ScheduledTaskStatusSuccess
+					settings.ScheduledTasks.Tasks[i].LastError = ""
+					if result.DryRun {
+						log.Printf("[scheduler] Task %s dry run completed: %d items to add, %d items to remove", taskID, len(result.ToAdd), len(result.ToRemove))
+					} else {
+						log.Printf("[scheduler] Task %s completed successfully, processed %d changes", taskID, result.Count)
+					}
 				}
-			}
 
-			// Auto-disable "once" tasks after completion
-			if settings.ScheduledTasks.Tasks[i].Frequency == config.ScheduledTaskFrequencyOnce {
-				settings.ScheduledTasks.Tasks[i].Enabled = false
-				log.Printf("[scheduler] Auto-disabled one-time task %s", taskID)
+				// Auto-disable "once" tasks after completion
+				if settings.ScheduledTasks.Tasks[i].Frequency == config.ScheduledTaskFrequencyOnce {
+					settings.ScheduledTasks.Tasks[i].Enabled = false
+					log.Printf("[scheduler] Auto-disabled one-time task %s", taskID)
+				}
+				break
 			}
-			break
 		}
-	}
 
-	if saveErr := s.configManager.Save(settings); saveErr != nil {
-		log.Printf("[scheduler] Failed to save task status: %v", saveErr)
+		return nil
+	}); updErr != nil {
+		log.Printf("[scheduler] Failed to save task status: %v", updErr)
 	}
 }
 

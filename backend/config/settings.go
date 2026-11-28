@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -2456,8 +2457,9 @@ func backfillUsenetEngineDefaults(existing []UsenetEngineSettings) []UsenetEngin
 
 // Manager loads and persists settings to a JSON file.
 type Manager struct {
-	path  string
-	cache settingsCache
+	path   string
+	cache  settingsCache
+	saveMu sync.Mutex // serialises Save/Update so writers never interleave
 }
 
 func NewManager(configPath string) *Manager {
@@ -3459,6 +3461,28 @@ func isZeroRawValue(value interface{}) bool {
 
 // Save writes the provided settings to disk atomically.
 func (m *Manager) Save(s Settings) error {
+	m.saveMu.Lock()
+	defer m.saveMu.Unlock()
+	return m.saveLocked(s)
+}
+
+// Update loads the current settings, applies fn and saves the result while
+// holding the save lock, so concurrent read-modify-write callers cannot lose
+// each other's changes. If fn returns an error nothing is written.
+func (m *Manager) Update(fn func(*Settings) error) error {
+	m.saveMu.Lock()
+	defer m.saveMu.Unlock()
+	s, err := m.Load()
+	if err != nil {
+		return err
+	}
+	if err := fn(&s); err != nil {
+		return err
+	}
+	return m.saveLocked(s)
+}
+
+func (m *Manager) saveLocked(s Settings) error {
 	if m.path == "" {
 		return errors.New("config path not set")
 	}
@@ -3483,11 +3507,11 @@ func (m *Manager) Save(s Settings) error {
 	if err := m.EnsureDir(); err != nil {
 		return err
 	}
-	tmp := m.path + ".tmp"
-	f, err := os.Create(tmp)
+	f, err := os.CreateTemp(filepath.Dir(m.path), filepath.Base(m.path)+".*.tmp")
 	if err != nil {
 		return err
 	}
+	tmp := f.Name()
 	enc := json.NewEncoder(f)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(s); err != nil {
@@ -3505,6 +3529,7 @@ func (m *Manager) Save(s Settings) error {
 		return err
 	}
 	if err := os.Rename(tmp, m.path); err != nil {
+		_ = os.Remove(tmp)
 		return err
 	}
 	m.cache.invalidate()
