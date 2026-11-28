@@ -3472,6 +3472,15 @@ func (m *Manager) Save(s Settings) error {
 func (m *Manager) Update(fn func(*Settings) error) error {
 	m.saveMu.Lock()
 	defer m.saveMu.Unlock()
+	// Load would create a missing settings file through Save, which takes
+	// saveMu again; write the defaults here while the lock is already held.
+	if m.path != "" {
+		if _, err := os.Stat(m.path); errors.Is(err, fs.ErrNotExist) {
+			if err := m.saveLocked(DefaultSettings()); err != nil {
+				return err
+			}
+		}
+	}
 	s, err := m.Load()
 	if err != nil {
 		return err
