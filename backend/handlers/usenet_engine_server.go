@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"path"
 	"sort"
@@ -36,7 +37,8 @@ import (
 //   - requests that went through a reverse proxy (forwarding headers present)
 //     are refused, so the API is reachable only directly (e.g. over Tailscale),
 //     never through a public hostname;
-//   - failed authentications are rate limited globally;
+//   - failed authentications are rate limited per remote address, so a stranger
+//     cannot lock the legitimate client out;
 //   - only NZB uploads are accepted (no addurl, so no server-side fetches), with
 //     body, filename and job-count limits and a bounded import concurrency.
 type UsenetEngineServer struct {
@@ -48,10 +50,8 @@ type UsenetEngineServer struct {
 
 	sem chan struct{}
 
-	failMu      sync.Mutex
-	failWindow  time.Time
-	failCount   int
-	lockedUntil time.Time
+	failMu sync.Mutex
+	fails  map[string]*engineServerFailState // keyed by remote IP
 
 	now           func() time.Time
 	importTimeout time.Duration
@@ -61,18 +61,26 @@ type UsenetEngineServer struct {
 // WebDAV-relative storage path (a media file or release directory).
 type EngineImporter func(ctx context.Context, fileName string, nzb []byte) (string, error)
 
+// engineServerFailState tracks failed authentications for one remote address.
+type engineServerFailState struct {
+	window      time.Time
+	count       int
+	lockedUntil time.Time
+}
+
 const (
-	EngineServerKeyEnv        = "MEDIASTORM_ENGINE_SERVER_KEY"
-	minEngineServerKeyLength  = 32
-	engineServerMaxNZBBytes   = 32 << 20
-	engineServerMaxJobs       = 256
-	engineServerMaxActive     = 32
-	engineServerConcurrency   = 4
-	engineServerJobRetention  = 12 * time.Hour
-	engineServerFailLimit     = 10
-	engineServerFailWindow    = time.Minute
-	engineServerLockout       = 5 * time.Minute
-	engineServerImportTimeout = 15 * time.Minute
+	EngineServerKeyEnv         = "MEDIASTORM_ENGINE_SERVER_KEY"
+	minEngineServerKeyLength   = 32
+	engineServerMaxNZBBytes    = 32 << 20
+	engineServerMaxJobs        = 256
+	engineServerMaxActive      = 32
+	engineServerConcurrency    = 4
+	engineServerJobRetention   = 12 * time.Hour
+	engineServerFailLimit      = 10
+	engineServerFailWindow     = time.Minute
+	engineServerLockout        = 5 * time.Minute
+	engineServerMaxFailEntries = 4096
+	engineServerImportTimeout  = 15 * time.Minute
 )
 
 type engineServerJob struct {
@@ -104,6 +112,7 @@ func NewUsenetEngineServer(key string, importer EngineImporter) (*UsenetEngineSe
 		keyDigest:     sha256.Sum256([]byte(key)),
 		importer:      importer,
 		jobs:          make(map[string]*engineServerJob),
+		fails:         make(map[string]*engineServerFailState),
 		sem:           make(chan struct{}, engineServerConcurrency),
 		now:           time.Now,
 		importTimeout: engineServerImportTimeout,
@@ -120,12 +129,13 @@ func (s *UsenetEngineServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if s.locked() {
+	remote := engineServerRemote(r)
+	if s.locked(remote) {
 		engineServerError(w, http.StatusTooManyRequests, "too many failed authentications")
 		return
 	}
 	if !s.authorized(r) {
-		s.recordFailure()
+		s.recordFailure(remote)
 		log.Printf("[engine-server] rejected unauthenticated request remote=%q mode=%q", r.RemoteAddr, r.URL.Query().Get("mode"))
 		engineServerError(w, http.StatusUnauthorized, "unauthorized")
 		return
@@ -166,25 +176,51 @@ func (s *UsenetEngineServer) authorized(r *http.Request) bool {
 	return subtle.ConstantTimeCompare(digest[:], s.keyDigest[:]) == 1
 }
 
-func (s *UsenetEngineServer) locked() bool {
-	s.failMu.Lock()
-	defer s.failMu.Unlock()
-	return s.now().Before(s.lockedUntil)
+// engineServerRemote returns the TCP peer address (proxy headers are refused
+// before this is used, so RemoteAddr is the real client).
+func engineServerRemote(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }
 
-func (s *UsenetEngineServer) recordFailure() {
+func (s *UsenetEngineServer) locked(remote string) bool {
+	s.failMu.Lock()
+	defer s.failMu.Unlock()
+	st := s.fails[remote]
+	return st != nil && s.now().Before(st.lockedUntil)
+}
+
+func (s *UsenetEngineServer) recordFailure(remote string) {
 	s.failMu.Lock()
 	defer s.failMu.Unlock()
 	now := s.now()
-	if now.Sub(s.failWindow) > engineServerFailWindow {
-		s.failWindow = now
-		s.failCount = 0
+	if len(s.fails) >= engineServerMaxFailEntries {
+		for k, v := range s.fails {
+			if now.Sub(v.window) > engineServerFailWindow && !now.Before(v.lockedUntil) {
+				delete(s.fails, k)
+			}
+		}
 	}
-	s.failCount++
-	if s.failCount >= engineServerFailLimit {
-		s.lockedUntil = now.Add(engineServerLockout)
-		s.failCount = 0
-		log.Printf("[engine-server] locking out authentication for %s after %d failures", engineServerLockout, engineServerFailLimit)
+	st := s.fails[remote]
+	if st == nil {
+		if len(s.fails) >= engineServerMaxFailEntries {
+			return // table full of active entries; stop tracking new addresses
+		}
+		st = &engineServerFailState{}
+		s.fails[remote] = st
+	}
+	if now.Sub(st.window) > engineServerFailWindow {
+		st.window = now
+		st.count = 0
+	}
+	st.count++
+	if st.count >= engineServerFailLimit {
+		st.lockedUntil = now.Add(engineServerLockout)
+		st.count = 0
+		log.Printf("[engine-server] locking out authentication from %s for %s after %d failures", remote, engineServerLockout, engineServerFailLimit)
 	}
 }
 
